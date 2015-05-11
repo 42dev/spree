@@ -1,4 +1,5 @@
 require 'rails/engine'
+require 'versioncake'
 
 module Spree
   module Api
@@ -9,10 +10,15 @@ module Spree
       Rabl.configure do |config|
         config.include_json_root = false
         config.include_child_root = false
+
+        # Motivation here it make it call as_json when rendering timestamps
+        # and therefore display miliseconds. Otherwise it would fall to
+        # JSON.dump which doesn't display the miliseconds
+        config.json_engine = ActiveSupport::JSON
       end
 
-      config.view_versions = [1]
-      config.view_version_extraction_strategy = :http_header
+      config.versioncake.supported_version_numbers = [1]
+      config.versioncake.extraction_strategy = :http_header
 
       initializer "spree.api.environment", :before => :load_config_initializers do |app|
         Spree::Api::Config = Spree::ApiConfiguration.new
@@ -31,5 +37,3 @@ module Spree
     end
   end
 end
-
-

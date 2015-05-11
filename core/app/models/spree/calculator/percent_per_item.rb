@@ -4,11 +4,12 @@ module Spree
   # for all matching products in an order. This should not be used as a
   # shipping calculator since it would be the same thing as a flat percent
   # off the entire order.
+  #
+  #
+  # TODO Should be deprecated now that we have adjustments at the line item level in spree core
 
   class Calculator::PercentPerItem < Calculator
-    preference :percent, :decimal, :default => 0
-
-    attr_accessible :preferred_percent
+    preference :percent, :decimal, default: 0
 
     def self.description
       Spree.t(:percent_per_item)
@@ -23,7 +24,9 @@ module Spree
 
   private
 
-    # Returns all products that match the promotion's rule.
+    # Returns all products that match this calculator, but only if the calculator
+    # is attached to a promotion. If attached to a ShippingMethod, nil is returned.
+    # Copied from per_item.rb
     def matching_products
       if compute_on_promotion?
         self.calculable.promotion.rules.map do |rule|

@@ -1,27 +1,47 @@
 module Spree
-  class ShippingRate < ActiveRecord::Base
+  class ShippingRate < Spree::Base
     belongs_to :shipment, class_name: 'Spree::Shipment'
-    belongs_to :shipping_method, class_name: 'Spree::ShippingMethod'
-
-    attr_accessible :id, :shipping_method, :shipment,
-                    :name, :cost, :selected, :shipping_method_id
-
-    scope :frontend, -> { includes(:shipping_method).where(ShippingMethod.on_frontend_query) }
-    scope :backend, -> { includes(:shipping_method).where(ShippingMethod.on_backend_query) }
+    belongs_to :shipping_method, class_name: 'Spree::ShippingMethod', inverse_of: :shipping_rates
+    belongs_to :tax_rate, class_name: 'Spree::TaxRate'
 
     delegate :order, :currency, to: :shipment
     delegate :name, to: :shipping_method
 
-    def display_price
-      if Spree::Config[:shipment_inc_vat]
-        price = (1 + Spree::TaxRate.default) * cost
-      else
-        price = cost
-      end
+    extend Spree::DisplayMoney
 
-      Spree::Money.new(price, { currency: currency })
+    money_methods :base_price, :tax_amount
+
+    def base_price
+      cost
     end
 
+    def display_price
+      price = display_base_price.to_s
+
+      return price if tax_rate.nil? || tax_amount == 0
+
+      Spree.t tax_rate.included_in_price? ? :including_tax : :excluding_tax,
+              scope: "shipping_rates.display_price",
+              price: price,
+              tax_amount: display_tax_amount,
+              tax_rate_name: tax_rate.name
+    end
     alias_method :display_cost, :display_price
+
+    def tax_amount
+      @_tax_amount ||= tax_rate.calculator.compute_shipping_rate(self)
+    end
+
+    def shipping_method
+      Spree::ShippingMethod.unscoped { super }
+    end
+
+    def shipping_method_code
+      shipping_method.code
+    end
+
+    def tax_rate
+      Spree::TaxRate.unscoped { super }
+    end
   end
 end

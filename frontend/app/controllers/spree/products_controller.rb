@@ -1,50 +1,45 @@
 module Spree
   class ProductsController < Spree::StoreController
-    before_filter :load_product, :only => :show
+    before_action :load_product, only: :show
+    before_action :load_taxon, only: :index
+
     rescue_from ActiveRecord::RecordNotFound, :with => :render_404
     helper 'spree/taxons'
 
     respond_to :html
 
     def index
-      @searcher = Config.searcher_class.new(params)
-      @searcher.current_user = try_spree_current_user
-      @searcher.current_currency = current_currency
+      @searcher = build_searcher(params.merge(include_images: true))
       @products = @searcher.retrieve_products
+      @taxonomies = Spree::Taxonomy.includes(root: :children)
     end
 
     def show
-      return unless @product
-
       @variants = @product.variants_including_master.active(current_currency).includes([:option_values, :images])
       @product_properties = @product.product_properties.includes(:property)
-
-      referer = request.env['HTTP_REFERER']
-      if referer
-        begin
-          referer_path = URI.parse(request.env['HTTP_REFERER']).path
-          # Fix for #2249
-        rescue URI::InvalidURIError
-          # Do nothing
-        else
-          if referer_path && referer_path.match(/\/t\/(.*)/)
-            @taxon = Taxon.find_by_permalink($1)
-          end
-        end
-      end
+      @taxon = Spree::Taxon.find(params[:taxon_id]) if params[:taxon_id]
     end
 
     private
       def accurate_title
-        @product ? @product.name : super
+        if @product
+          @product.meta_title.blank? ? @product.name : @product.meta_title
+        else
+          super
+        end
       end
 
       def load_product
         if try_spree_current_user.try(:has_spree_role?, "admin")
-          @product = Product.find_by_permalink!(params[:id])
+          @products = Product.with_deleted
         else
-          @product = Product.active(current_currency).find_by_permalink!(params[:id])
+          @products = Product.active(current_currency)
         end
+        @product = @products.friendly.find(params[:id])
+      end
+
+      def load_taxon
+        @taxon = Spree::Taxon.find(params[:taxon]) if params[:taxon].present?
       end
   end
 end

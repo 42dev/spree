@@ -4,9 +4,9 @@
 # Inside your spec_helper.rb, include this module inside the RSpec.configure
 # block by doing this:
 #
-#   require 'spree/core/testing_support/controller_requests'
+#   require 'spree/testing_support/controller_requests'
 #   RSpec.configure do |c|
-#     c.include Spree::Core::TestingSupport::ControllerRequests, :type => :controller
+#     c.include Spree::TestingSupport::ControllerRequests, :type => :controller
 #   end
 #
 # Then, in your controller tests, you can access spree routes like this:
@@ -26,6 +26,12 @@
 module Spree
   module TestingSupport
     module ControllerRequests
+      extend ActiveSupport::Concern
+
+      included do
+        routes { Spree::Core::Engine.routes }
+      end
+
       def spree_get(action, parameters = nil, session = nil, flash = nil)
         process_spree_action(action, parameters, session, flash, "GET")
       end
@@ -46,20 +52,33 @@ module Spree
       end
 
       def spree_xhr_get(action, parameters = nil, session = nil, flash = nil)
-        parameters ||= {}
-        parameters.reverse_merge!(:format => :json)
-        parameters.merge!(:use_route => :spree)
-        xml_http_request(:get, action, parameters, session, flash)
+        process_spree_xhr_action(action, parameters, session, flash, :get)
+      end
+
+      def spree_xhr_post(action, parameters = nil, session = nil, flash = nil)
+        process_spree_xhr_action(action, parameters, session, flash, :post)
+      end
+
+      def spree_xhr_put(action, parameters = nil, session = nil, flash = nil)
+        process_spree_xhr_action(action, parameters, session, flash, :put)
+      end
+
+      def spree_xhr_delete(action, parameters = nil, session = nil, flash = nil)
+        process_spree_xhr_action(action, parameters, session, flash, :delete)
       end
 
       private
 
       def process_spree_action(action, parameters = nil, session = nil, flash = nil, method = "GET")
         parameters ||= {}
-        process(action, parameters.merge!(:use_route => :spree), session, flash, method)
+        process(action, method, parameters, session, flash)
+      end
+
+      def process_spree_xhr_action(action, parameters = nil, session = nil, flash = nil, method = :get)
+        parameters ||= {}
+        parameters.reverse_merge!(:format => :json)
+        xml_http_request(method, action, parameters, session, flash)
       end
     end
   end
 end
-
-

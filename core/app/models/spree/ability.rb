@@ -31,40 +31,32 @@ module Spree
       alias_action :new, to: :create
       alias_action :new_action, to: :create
       alias_action :show, to: :read
+      alias_action :index, :read, to: :display
+      alias_action :create, :update, :destroy, to: :modify
 
       user ||= Spree.user_class.new
 
       if user.respond_to?(:has_spree_role?) && user.has_spree_role?('admin')
         can :manage, :all
       else
-        can [:manage], Address do |address|
-          # The addresses user method will be dependent upon your authentication solution.
-          # Spree assumes you will add a user method to Address in order to authorize users other than admins to modify the address.
-          address.user == user
-        end
-        can [:index, :read], Country
-        can [:index, :read], OptionType
-        can [:index, :read], OptionValue
+        can :display, Country
+        can :display, OptionType
+        can :display, OptionValue
         can :create, Order
-        can :read, Order do |order, token|
-          order.user == user || order.token && token == order.token
+        can [:read, :update], Order do |order, token|
+          order.user == user || order.guest_token && token == order.guest_token
         end
-        can :update, Order do |order, token|
-          order.user == user || order.token && token == order.token
-        end
-        can [:index, :read], Product
-        can [:index, :read], ProductProperty
-        can [:index, :read], Property
+        can :display, CreditCard, user_id: user.id
+        can :display, Product
+        can :display, ProductProperty
+        can :display, Property
         can :create, Spree.user_class
         can [:read, :update, :destroy], Spree.user_class, id: user.id
-        can [:index, :read], State
-        can [:index, :read], StockItem
-        can [:index, :read], StockLocation
-        can [:index, :read], StockMovement
-        can [:index, :read], Taxon
-        can [:index, :read], Taxonomy
-        can [:index, :read], Variant
-        can [:index, :read], Zone
+        can :display, State
+        can :display, Taxon
+        can :display, Taxonomy
+        can :display, Variant
+        can :display, Zone
       end
 
       # Include any abilities registered by extensions, etc.
@@ -72,6 +64,9 @@ module Spree
         ability = clazz.send(:new, user)
         @rules = rules + ability.send(:rules)
       end
+
+      # Protect admin and user roles
+      cannot [:update, :destroy], Role, name: ['admin']
     end
   end
 end

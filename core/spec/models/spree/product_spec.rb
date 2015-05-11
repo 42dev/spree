@@ -3,27 +3,29 @@
 require 'spec_helper'
 
 module ThirdParty
-  class Extension < ActiveRecord::Base
+  class Extension < Spree::Base
     # nasty hack so we don't have to create a table to back this fake model
     self.table_name = 'spree_products'
   end
 end
 
-describe Spree::Product do
+describe Spree::Product, :type => :model do
+
   context 'product instance' do
     let(:product) { create(:product) }
+    let(:variant) { create(:variant, :product => product) }
 
     context '#duplicate' do
       before do
-        product.stub :taxons => [create(:taxon)]
+        allow(product).to receive_messages :taxons => [create(:taxon)]
       end
 
       it 'duplicates product' do
         clone = product.duplicate
-        clone.name.should == 'COPY OF ' + product.name
-        clone.master.sku.should == 'COPY OF ' + product.master.sku
-        clone.taxons.should == product.taxons
-        clone.images.size.should == product.images.size
+        expect(clone.name).to eq('COPY OF ' + product.name)
+        expect(clone.master.sku).to eq('COPY OF ' + product.master.sku)
+        expect(clone.taxons).to eq(product.taxons)
+        expect(clone.images.size).to eq(product.images.size)
       end
 
       it 'calls #duplicate_extra' do
@@ -34,17 +36,56 @@ describe Spree::Product do
         end
 
         clone = product.duplicate
-        clone.name.should == product.name.reverse
+        expect(clone.name).to eq(product.name.reverse)
+      end
+    end
+
+    context "master variant" do
+
+      context "when master variant changed" do
+        before do
+          product.master.sku = "Something changed"
+        end
+
+        it "saves the master" do
+          expect(product.master).to receive(:save!)
+          product.save
+        end
+      end
+
+      context "when master default price changed" do
+        before do
+          master = product.master
+          master.default_price.price = 11
+          master.save!
+          product.master.default_price.price = 12
+        end
+
+        it "saves the master" do
+          expect(product.master).to receive(:save!)
+          product.save
+        end
+
+        it "saves the default price" do
+          expect(product.master.default_price).to receive(:save)
+          product.save
+        end
+      end
+
+      context "when master variant and price haven't changed" do
+        it "does not save the master" do
+          expect(product.master).not_to receive(:save!)
+          product.save
+        end
       end
     end
 
     context "product has no variants" do
-      context "#delete" do
+      context "#destroy" do
         it "should set deleted_at value" do
-          product.delete
-          product.reload
-          product.deleted_at.should_not be_nil
-          product.master.deleted_at.should_not be_nil
+          product.destroy
+          expect(product.deleted_at).not_to be_nil
+          expect(product.master.reload.deleted_at).not_to be_nil
         end
       end
     end
@@ -54,11 +95,11 @@ describe Spree::Product do
         create(:variant, :product => product)
       end
 
-      context "#delete" do
+      context "#destroy" do
         it "should set deleted_at value" do
-          product.delete
-          product.deleted_at.should_not be_nil
-          product.variants_including_master.all? { |v| !v.deleted_at.nil? }.should be_true
+          product.destroy
+          expect(product.deleted_at).not_to be_nil
+          expect(product.variants_including_master.all? { |v| !v.deleted_at.nil? }).to be true
         end
       end
     end
@@ -67,27 +108,15 @@ describe Spree::Product do
       # Regression test for #1173
       it 'strips non-price characters' do
         product.price = "$10"
-        product.price.should == 10.0
+        expect(product.price).to eq(10.0)
       end
     end
 
     context "#display_price" do
       before { product.price = 10.55 }
 
-      context "with display_currency set to true" do
-        before { Spree::Config[:display_currency] = true }
-
-        it "shows the currency" do
-          product.display_price.to_s.should == "$10.55 USD"
-        end
-      end
-
-      context "with display_currency set to false" do
-        before { Spree::Config[:display_currency] = false }
-
-        it "does not include the currency" do
-          product.display_price.to_s.should == "$10.55"
-        end
+      it "shows the amount" do
+        expect(product.display_price.to_s).to eq("$10.55")
       end
 
       context "with currency set to JPY" do
@@ -98,7 +127,7 @@ describe Spree::Product do
         end
 
         it "displays the currency in yen" do
-          product.display_price.to_s.should == "¥11"
+          expect(product.display_price.to_s).to eq("¥11")
         end
       end
     end
@@ -106,15 +135,20 @@ describe Spree::Product do
     context "#available?" do
       it "should be available if date is in the past" do
         product.available_on = 1.day.ago
-        product.should be_available
+        expect(product).to be_available
       end
 
       it "should not be available if date is nil or in the future" do
         product.available_on = nil
-        product.should_not be_available
+        expect(product).not_to be_available
 
         product.available_on = 1.day.from_now
-        product.should_not be_available
+        expect(product).not_to be_available
+      end
+
+      it "should not be available if destroyed" do
+        product.destroy
+        expect(product).not_to be_available
       end
     end
 
@@ -125,57 +159,99 @@ describe Spree::Product do
       before { high.option_values.destroy_all }
 
       it "returns only variants with option values" do
-        product.variants_and_option_values.should == [low]
-      end
-    end
-  end
-
-  context "permalink" do
-    context "build product with similar name" do
-      let!(:other) { create(:product, :name => 'foo bar') }
-      let(:product) { build(:product, :name => 'foo') }
-
-      before { product.valid? }
-
-      it "increments name" do
-        product.permalink.should == 'foo-1'
+        expect(product.variants_and_option_values).to eq([low])
       end
     end
 
-    context "build permalink with quotes" do
-      it "saves quotes" do
-        product = create(:product, :name => "Joe's", :permalink => "joe's")
-        product.permalink.should == "joe's"
+    describe 'Variants sorting' do
+      context 'without master variant' do
+        it 'sorts variants by position' do
+          expect(product.variants.to_sql).to match(/ORDER BY (\`|\")spree_variants(\`|\").position ASC/)
+        end
+      end
+
+      context 'with master variant' do
+        it 'sorts variants by position' do
+          expect(product.variants_including_master.to_sql).to match(/ORDER BY (\`|\")spree_variants(\`|\").position ASC/)
+        end
       end
     end
 
-    context "permalinks must be unique" do
-      before do
-        @product1 = create(:product, :name => 'foo')
-      end
+    context "has stock movements" do
+      let(:variant) { product.master }
+      let(:stock_item) { variant.stock_items.first }
 
-      it "cannot create another product with the same permalink" do
-        @product2 = create(:product, :name => 'foo')
-        lambda do
-          @product2.update_attributes(:permalink => @product1.permalink)
-        end.should raise_error(ActiveRecord::RecordNotUnique)
+      it "doesnt raise ReadOnlyRecord error" do
+        Spree::StockMovement.create!(stock_item: stock_item, quantity: 1)
+        expect { product.destroy }.not_to raise_error
       end
     end
 
-    it "supports Chinese" do
-      create(:product, :name => "你好").permalink.should == "ni-hao"
+    # Regression test for #3737
+    context "has stock items" do
+      it "can retrieve stock items" do
+        expect(product.master.stock_items.first).not_to be_nil
+        expect(product.stock_items.first).not_to be_nil
+      end
     end
 
-    context "manual permalink override" do
-      let(:product) { create(:product, :name => "foo") }
+    context "slugs" do
 
-      it "calling save_permalink with a parameter" do
-        product.name = "foobar"
-        product.save
-        product.permalink.should == "foo"
+      it "normalizes slug on update validation" do
+        product.slug = "hey//joe"
+        product.valid?
+        expect(product.slug).not_to match "/"
+      end
 
-        product.save_permalink(product.name)
-        product.permalink.should == "foobar"
+      context "when product destroyed" do
+
+        it "renames slug" do
+          expect { product.destroy }.to change { product.slug }
+        end
+
+        context "when slug is already at or near max length" do
+
+          before do
+            product.slug = "x" * 255
+            product.save!
+          end
+
+          it "truncates renamed slug to ensure it remains within length limit" do
+            product.destroy
+            expect(product.slug.length).to eq 255
+          end
+
+        end
+
+      end
+
+      it "validates slug uniqueness" do
+        existing_product = product
+        new_product = create(:product)
+        new_product.slug = existing_product.slug
+
+        expect(new_product.valid?).to eq false
+      end
+
+      it "falls back to 'name-sku' for slug if regular name-based slug already in use" do
+        product1 = build(:product)
+        product1.name = "test"
+        product1.sku = "123"
+        product1.save!
+
+        product2 = build(:product)
+        product2.name = "test"
+        product2.sku = "456"
+        product2.save!
+
+        expect(product2.slug).to eq 'test-456'
+      end
+
+    end
+
+    context "hard deletion" do
+      it "doesnt raise ActiveRecordError error" do
+        expect { product.really_destroy! }.to_not raise_error
       end
     end
   end
@@ -185,10 +261,10 @@ describe Spree::Product do
 
     it "should properly assign properties" do
       product.set_property('the_prop', 'value1')
-      product.property('the_prop').should == 'value1'
+      expect(product.property('the_prop')).to eq('value1')
 
       product.set_property('the_prop', 'value2')
-      product.property('the_prop').should == 'value2'
+      expect(product.property('the_prop')).to eq('value2')
     end
 
     it "should not create duplicate properties when set_property is called" do
@@ -202,8 +278,24 @@ describe Spree::Product do
         product.set_property('the_prop_new', 'value')
         product.save
         product.reload
-        product.property('the_prop_new').should == 'value'
+        expect(product.property('the_prop_new')).to eq('value')
       }.to change { product.properties.length }.by(1)
+    end
+
+    context 'optional property_presentation' do
+      subject { Spree::Property.where(name: 'foo').first.presentation }
+      let(:name) { 'foo' }
+      let(:presentation) { 'baz' }
+
+      describe 'is not used' do
+        before { product.set_property(name, 'bar') }
+        it { is_expected.to eq name }
+      end
+
+      describe 'is used' do
+        before { product.set_property(name, 'bar', presentation) }
+        it { is_expected.to eq presentation }
+      end
     end
 
     # Regression test for #2455
@@ -211,21 +303,38 @@ describe Spree::Product do
       Spree::Property.where(:name => 'foo').first_or_create!(:presentation => "Foo's Presentation Name")
       product.set_property('foo', 'value1')
       product.set_property('bar', 'value2')
-      Spree::Property.where(:name => 'foo').first.presentation.should == "Foo's Presentation Name"
-      Spree::Property.where(:name => 'bar').first.presentation.should == "bar"
+      expect(Spree::Property.where(:name => 'foo').first.presentation).to eq("Foo's Presentation Name")
+      expect(Spree::Property.where(:name => 'bar').first.presentation).to eq("bar")
+    end
+
+    # Regression test for #4416
+    context "#possible_promotions" do
+      let!(:promotion) do
+        create(:promotion, advertise: true, starts_at: 1.day.ago)
+      end
+      let!(:rule) do
+        Spree::Promotion::Rules::Product.create(
+          promotion: promotion,
+          products: [product]
+        )
+      end
+
+      it "lists the promotion as a possible promotion" do
+        expect(product.possible_promotions).to include(promotion)
+      end
     end
   end
 
   context '#create' do
     let!(:prototype) { create(:prototype) }
-    let!(:product) { Spree::Product.new(:name => "Foo", :price => 1.99) }
+    let!(:product) { Spree::Product.new(name: "Foo", price: 1.99, shipping_category_id: create(:shipping_category).id) }
 
     before { product.prototype_id = prototype.id }
 
     context "when prototype is supplied" do
       it "should create properties based on the prototype" do
         product.save
-        product.properties.count.should == 1
+        expect(product.properties.count).to eq(1)
       end
     end
 
@@ -233,7 +342,7 @@ describe Spree::Product do
       def build_option_type_with_values(name, values)
         ot = create(:option_type, :name => name)
         values.each do |val|
-          ot.option_values.create({:name => val.downcase, :presentation => val}, :without_protection => true)
+          ot.option_values.create(:name => val.downcase, :presentation => val)
         end
         ot
       end
@@ -253,28 +362,28 @@ describe Spree::Product do
 
       it "should create option types based on the prototype" do
         product.save
-        product.option_type_ids.length.should == 1
-        product.option_type_ids.should == prototype.option_type_ids
+        expect(product.option_type_ids.length).to eq(1)
+        expect(product.option_type_ids).to eq(prototype.option_type_ids)
       end
 
       it "should create product option types based on the prototype" do
         product.save
-        product.product_option_types.pluck(:option_type_id).should == prototype.option_type_ids
+        expect(product.product_option_types.pluck(:option_type_id)).to eq(prototype.option_type_ids)
       end
 
       it "should create variants from an option values hash with one option type" do
         product.option_values_hash = option_values_hash
         product.save
-        product.variants.length.should == 3
+        expect(product.variants.length).to eq(3)
       end
 
       it "should still create variants when option_values_hash is given but prototype id is nil" do
         product.option_values_hash = option_values_hash
         product.prototype_id = nil
         product.save
-        product.option_type_ids.length.should == 1
-        product.option_type_ids.should == prototype.option_type_ids
-        product.variants.length.should == 3
+        expect(product.option_type_ids.length).to eq(1)
+        expect(product.option_type_ids).to eq(prototype.option_type_ids)
+        expect(product.variants.length).to eq(3)
       end
 
       it "should create variants from an option values hash with multiple option types" do
@@ -285,8 +394,8 @@ describe Spree::Product do
         product.option_values_hash = option_values_hash
         product.save
         product.reload
-        product.option_type_ids.length.should == 3
-        product.variants.length.should == 27
+        expect(product.option_type_ids.length).to eq(3)
+        expect(product.variants.length).to eq(27)
       end
     end
   end
@@ -303,11 +412,11 @@ describe Spree::Product do
     end
 
     it "only looks for variant images" do
-      product.images.size.should == 2
+      expect(product.images.size).to eq(2)
     end
 
     it "should be sorted by position" do
-      product.images.pluck(:alt).should eq(["position 1", "position 2"])
+      expect(product.images.pluck(:alt)).to eq(["position 1", "position 2"])
     end
   end
 
@@ -315,26 +424,51 @@ describe Spree::Product do
   context "classifications and taxons" do
     it "is joined through classifications" do
       reflection = Spree::Product.reflect_on_association(:taxons)
-      reflection.options[:through] = :classifications
+      expect(reflection.options[:through]).to eq(:classifications)
     end
 
     it "will delete all classifications" do
       reflection = Spree::Product.reflect_on_association(:classifications)
-      reflection.options[:dependent] = :delete_all
+      expect(reflection.options[:dependent]).to eq(:delete_all)
     end
   end
 
-  describe '#total_on_hand' do
+  context '#total_on_hand' do
+    let(:product) { create(:product) }
+
     it 'should be infinite if track_inventory_levels is false' do
       Spree::Config[:track_inventory_levels] = false
-      build(:product).total_on_hand.should eql(Float::INFINITY)
+      expect(build(:product, :variants_including_master => [build(:master_variant)]).total_on_hand).to eql(Float::INFINITY)
+    end
+
+    it 'should be infinite if variant is on demand' do
+      Spree::Config[:track_inventory_levels] = true
+      expect(build(:product, :variants_including_master => [build(:on_demand_master_variant)]).total_on_hand).to eql(Float::INFINITY)
     end
 
     it 'should return sum of stock items count_on_hand' do
-      product = build(:product)
-      product.stub stock_items: [mock(Spree::StockItem, count_on_hand: 5)]
-      product.total_on_hand.should eql(5)
+      product.stock_items.first.set_count_on_hand 5
+      product.variants_including_master(true) # force load association
+      expect(product.total_on_hand).to eql(5)
+    end
+
+    it 'should return sum of stock items count_on_hand when variants_including_master is not loaded' do
+      product.stock_items.first.set_count_on_hand 5
+      expect(product.reload.total_on_hand).to eql(5)
     end
   end
 
+  # Regression spec for https://github.com/spree/spree/issues/5588
+  context '#validate_master when duplicate SKUs entered' do
+    let!(:first_product) { create(:product, sku: 'a-sku') }
+    let(:second_product) { build(:product, sku: 'a-sku') }
+
+    subject { second_product }
+    it { is_expected.to be_invalid }
+  end
+
+  it "initializes a master variant when building a product" do
+    product = Spree::Product.new
+    expect(product.master.is_master).to be true
+  end
 end

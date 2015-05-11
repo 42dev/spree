@@ -4,43 +4,38 @@ module Spree
   # checkout which has nothing to do with updating an order that this approach
   # is waranted.
   class CheckoutController < Spree::StoreController
-    ssl_required
+    before_action :load_order_with_lock
+    before_action :ensure_valid_state_lock_version, only: [:update]
+    before_action :set_state_if_present
 
-    before_filter :load_order
+    before_action :ensure_order_not_completed
+    before_action :ensure_checkout_allowed
+    before_action :ensure_sufficient_stock_lines
+    before_action :ensure_valid_state
 
-    before_filter :ensure_order_not_completed
-    before_filter :ensure_checkout_allowed
-    before_filter :ensure_sufficient_stock_lines
-    before_filter :ensure_valid_state
+    before_action :associate_user
+    before_action :check_authorization
+    before_action :apply_coupon_code
 
-    before_filter :associate_user
-    before_filter :check_authorization
+    before_action :setup_for_current_state
 
     helper 'spree/orders'
 
     rescue_from Spree::Core::GatewayError, :with => :rescue_from_spree_gateway_error
 
-    def edit
-      if stale_order?
-        respond_with(@order)
-      end
-    end
-
     # Updates the order and advances to the next state (when possible.)
     def update
-      if @order.update_attributes(object_params)
-        fire_event('spree.checkout.update')
-        return if after_update_attributes
-
+      if @order.update_from_params(params, permitted_checkout_attributes, request.headers.env)
+        @order.temporary_address = !params[:save_user_address]
         unless @order.next
-          flash[:error] = Spree.t(:payment_processing_failed)
+          flash[:error] = @order.errors.full_messages.join("\n")
           redirect_to checkout_state_path(@order.state) and return
         end
 
         if @order.completed?
-          session[:order_id] = nil
+          @current_order = nil
           flash.notice = Spree.t(:order_processed_successfully)
-          flash[:commerce_tracking] = "nothing special"
+          flash['order_completed'] = true
           redirect_to completion_route
         else
           redirect_to checkout_state_path(@order.state)
@@ -51,15 +46,35 @@ module Spree
     end
 
     private
-      def ensure_valid_state
-        unless skip_state_validation?
-          if (params[:state] && !@order.has_checkout_step?(params[:state])) ||
-             (!params[:state] && !@order.has_checkout_step?(@order.state))
-            @order.state = 'cart'
-            redirect_to checkout_state_path(@order.checkout_steps.first)
-          end
-        end
+
+    def unknown_state?
+      (params[:state] && !@order.has_checkout_step?(params[:state])) ||
+        (!params[:state] && !@order.has_checkout_step?(@order.state))
+    end
+
+    def insufficient_payment?
+      params[:state] == "confirm" &&
+        @order.payment_required? &&
+        @order.payments.valid.sum(:amount) != @order.total
+    end
+
+    def correct_state
+      if unknown_state?
+        @order.checkout_steps.first
+      elsif insufficient_payment?
+        'payment'
+      else
+        @order.state
       end
+    end
+
+    def ensure_valid_state
+      if @order.state != correct_state && !skip_state_validation?
+        flash.keep
+        @order.state = correct_state
+        redirect_to checkout_state_path(@order.state)
+      end
+    end
 
       # Should be overriden if you have areas of your checkout that don't match
       # up to a step within checkout_steps, such as a registration step
@@ -67,21 +82,27 @@ module Spree
         false
       end
 
-      def stale_order?
-        stale?(:etag => @order, :last_modified => @order.updated_at)
+      def load_order_with_lock
+        @order = current_order(lock: true)
+        redirect_to spree.cart_path and return unless @order
       end
 
-      def load_order
-        @order = current_order
-        redirect_to spree.cart_path and return unless @order
+      def ensure_valid_state_lock_version
+        if params[:order] && params[:order][:state_lock_version]
+          @order.with_lock do
+            unless @order.state_lock_version == params[:order].delete(:state_lock_version).to_i
+              flash[:error] = Spree.t(:order_already_updated)
+              redirect_to checkout_state_path(@order.state) and return
+            end
+            @order.increment!(:state_lock_version)
+          end
+        end
+      end
 
+      def set_state_if_present
         if params[:state]
           redirect_to checkout_state_path(@order.state) if @order.can_go_to_state?(params[:state]) && !skip_state_validation?
           @order.state = params[:state]
-        end
-
-        if stale_order?
-          setup_for_current_state
         end
       end
 
@@ -103,29 +124,8 @@ module Spree
       end
 
       # Provides a route to redirect after order completion
-      def completion_route
-        spree.order_path(@order)
-      end
-
-      # For payment step, filter order parameters to produce the expected nested
-      # attributes for a single payment and its source, discarding attributes
-      # for payment methods other than the one selected
-      def object_params
-        # respond_to check is necessary due to issue described in #2910
-        if @order.has_checkout_step?("payment") && @order.payment?
-          if params[:payment_source].present?
-            source_params = params.delete(:payment_source)[params[:order][:payments_attributes].first[:payment_method_id].underscore]
-
-            if source_params
-              params[:order][:payments_attributes].first[:source_attributes] = source_params
-            end
-          end
-
-          if (params[:order][:payments_attributes])
-            params[:order][:payments_attributes].first[:amount] = @order.total
-          end
-        end
-        params[:order]
+      def completion_route(custom_params = nil)
+        spree.order_path(@order, custom_params)
       end
 
       def setup_for_current_state
@@ -134,8 +134,10 @@ module Spree
       end
 
       def before_address
-        @order.bill_address ||= Address.default
-        @order.ship_address ||= Address.default
+        # if the user has a default address, a callback takes care of setting
+        # that; but if he doesn't, we need to build an empty one here
+        @order.bill_address ||= Address.build_default
+        @order.ship_address ||= Address.build_default if @order.checkout_steps.include?('delivery')
       end
 
       def before_delivery
@@ -146,32 +148,27 @@ module Spree
       end
 
       def before_payment
-        packages = @order.shipments.map { |s| s.to_package }
-        @differentiator = Spree::Stock::Differentiator.new(@order, packages)
-        @differentiator.missing.each do |variant, quantity|
-          @order.contents.remove(variant, quantity)
+        if @order.checkout_steps.include? "delivery"
+          packages = @order.shipments.map { |s| s.to_package }
+          @differentiator = Spree::Stock::Differentiator.new(@order, packages)
+          @differentiator.missing.each do |variant, quantity|
+            @order.contents.remove(variant, quantity)
+          end
+        end
+
+        if try_spree_current_user && try_spree_current_user.respond_to?(:payment_sources)
+          @payment_sources = try_spree_current_user.payment_sources
         end
       end
 
-      def rescue_from_spree_gateway_error
-        flash[:error] = Spree.t(:spree_gateway_error_flash_for_checkout)
+      def rescue_from_spree_gateway_error(exception)
+        flash.now[:error] = Spree.t(:spree_gateway_error_flash_for_checkout)
+        @order.errors.add(:base, exception.message)
         render :edit
       end
 
       def check_authorization
-        authorize!(:edit, current_order, session[:access_token])
-      end
-
-      def after_update_attributes
-        coupon_result = Spree::Promo::CouponApplicator.new(@order).apply
-        if coupon_result[:coupon_applied?]
-          flash[:success] = coupon_result[:success] if coupon_result[:success].present?
-          return false
-        else
-          flash[:error] = coupon_result[:error]
-          respond_with(@order) { |format| format.html { render :edit } }
-          return true
-        end
+        authorize!(:edit, current_order, cookies.signed[:guest_token])
       end
   end
 end

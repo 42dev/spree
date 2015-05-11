@@ -1,21 +1,17 @@
-Spree::Core::Engine.routes.draw do
-  root :to => 'home#index'
-
+Spree::Core::Engine.add_routes do
   namespace :admin do
-    get '/search/users', :to => "search#users", :as => :search_users
+    get '/search/users', to: "search#users", as: :search_users
+    get '/search/products', to: "search#products", as: :search_products
 
     resources :promotions do
       resources :promotion_rules
       resources :promotion_actions
     end
 
-    resources :adjustments
+    resources :promotion_categories, except: [:show]
+
     resources :zones
-    resources :banners do
-      member do
-        post :dismiss
-      end
-    end
+
     resources :countries do
       resources :states
     end
@@ -42,9 +38,10 @@ Spree::Core::Engine.routes.draw do
           post :update_positions
         end
       end
+      resources :variants_including_master, only: [:update]
     end
 
-    get '/variants/search', :to => "variants#search", :as => :search_variants
+    get '/variants/search', to: "variants#search", as: :search_variants
 
     resources :option_types do
       collection do
@@ -53,7 +50,7 @@ Spree::Core::Engine.routes.draw do
       end
     end
 
-    delete '/option_values/:id', :to => "option_values#destroy", :as => :option_value
+    delete '/option_values/:id', to: "option_values#destroy", as: :option_value
 
     resources :properties do
       collection do
@@ -61,7 +58,7 @@ Spree::Core::Engine.routes.draw do
       end
     end
 
-    delete '/product_properties/:id', :to => "product_properties#destroy", :as => :product_property
+    delete '/product_properties/:id', to: "product_properties#destroy", as: :product_property
 
     resources :prototypes do
       member do
@@ -73,25 +70,27 @@ Spree::Core::Engine.routes.draw do
       end
     end
 
-    resource :image_settings
-
-    resources :orders, :except => [:show] do
+    resources :orders, except: [:show] do
       member do
-        put :fire
-        get :fire
+        get :cart
         post :resend
         get :open_adjustments
         get :close_adjustments
+        put :approve
+        put :cancel
+        put :resume
       end
 
-      resource :customer, :controller => "orders/customer_details"
+      resources :state_changes, only: [:index]
 
-      resources :adjustments do
+      resource :customer, controller: "orders/customer_details"
+      resources :customer_returns, only: [:index, :new, :edit, :create, :update] do
         member do
-          get :toggle_state
+          put :refund
         end
       end
-      resources :line_items
+
+      resources :adjustments
       resources :return_authorizations do
         member do
           put :fire
@@ -101,18 +100,30 @@ Spree::Core::Engine.routes.draw do
         member do
           put :fire
         end
+
+        resources :log_entries
+        resources :refunds, only: [:new, :create, :edit, :update]
+      end
+
+      resources :reimbursements, only: [:create, :show, :edit, :update] do
+        member do
+          post :perform
+        end
       end
     end
 
     resource :general_settings do
       collection do
         post :dismiss_alert
+        post :clear_cache
       end
     end
 
+    resources :return_items, only: [:update]
+
     resources :taxonomies do
       collection do
-      	post :update_positions
+        post :update_positions
       end
       member do
         get :get_children
@@ -120,40 +131,51 @@ Spree::Core::Engine.routes.draw do
       resources :taxons
     end
 
-    resources :taxons, :only => [] do
+    resources :taxons, only: [:index, :show] do
       collection do
         get :search
       end
     end
 
-    resources :reports, :only => [:index, :show] do
+    resources :reports, only: [:index] do
       collection do
         get :sales_total
         post :sales_total
       end
     end
 
+    resources :reimbursement_types, only: [:index]
+    resources :refund_reasons, except: [:show, :destroy]
+    resources :return_authorization_reasons, except: [:show, :destroy]
+
     resources :shipping_methods
     resources :shipping_categories
-    resources :stock_transfers, :only => [:index, :show, :new, :create]
+    resources :stock_transfers, only: [:index, :show, :new, :create]
     resources :stock_locations do
-      resources :stock_movements
+      resources :stock_movements, except: [:edit, :update, :destroy]
       collection do
         post :transfer_stock
       end
     end
 
-    resources :stock_movements
-    resources :stock_items, :only => [:create, :update, :destroy]
+    resources :stock_items, only: [:create, :update, :destroy]
     resources :tax_rates
-    resource  :tax_settings
 
     resources :trackers
     resources :payment_methods
-    resource :mail_method, :only => [:edit, :update] do
-      post :testmail, :on => :collection
+    resources :roles
+
+    resources :users do
+      member do
+        get :addresses
+        put :addresses
+        put :clear_api_key
+        put :generate_api_key
+        get :items
+        get :orders
+      end
     end
   end
 
-  match '/admin', :to => 'admin/orders#index', :as => :admin
+  get '/admin', to: 'admin/root#index', as: :admin
 end

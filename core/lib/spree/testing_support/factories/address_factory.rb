@@ -6,9 +6,9 @@ FactoryGirl.define do
     address1 '10 Lovely Street'
     address2 'Northwest'
     city 'Herndon'
-    zipcode '20170'
-    phone '123-456-7890'
-    alternative_phone '123-456-7899'
+    zipcode '35005'
+    phone '555-555-0199'
+    alternative_phone '555-555-0199'
 
     state { |address| address.association(:state) }
     country do |address|

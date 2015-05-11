@@ -8,7 +8,9 @@ Gem::Specification.new do |s|
   s.summary     = 'The bare bones necessary for Spree.'
   s.description = 'The bare bones necessary for Spree.'
 
-  s.required_ruby_version = '>= 1.9.3'
+  s.required_ruby_version     = '>= 2.1.0'
+  s.required_rubygems_version = '>= 1.8.23'
+
   s.author      = 'Sean Schofield'
   s.email       = 'sean@spreecommerce.com'
   s.homepage    = 'http://spreecommerce.com'
@@ -17,28 +19,30 @@ Gem::Specification.new do |s|
   s.files        = Dir['LICENSE', 'README.md', 'app/**/*', 'config/**/*', 'lib/**/*', 'db/**/*', 'vendor/**/*']
   s.require_path = 'lib'
 
-  # Necessary for the install generator
-  s.add_dependency 'highline', '= 1.6.18'
-
-  s.add_dependency 'acts_as_list', '= 0.2.0'
-  s.add_dependency 'awesome_nested_set', '2.1.5'
-  # Frozen to 0.13.0 due to: https://github.com/amatsuda/kaminari/pull/282
-  s.add_dependency 'kaminari', '0.13.0'
-
-  s.add_dependency 'state_machine', '1.2.0'
-  s.add_dependency 'ffaker', '~> 1.16.1'
-  s.add_dependency 'paperclip', '~> 3.4.1'
-  s.add_dependency 'aws-sdk', '~> 1.3.4'
-  s.add_dependency 'ransack', '0.7.2'
-  s.add_dependency 'activemerchant', '~> 1.31'
-  s.add_dependency 'json', '>= 1.7.7'
-  s.add_dependency 'rails', '~> 3.2.13'
-  s.add_dependency 'deface', '>= 0.9.0'
-  s.add_dependency 'stringex', '~> 1.5.1'
-  s.add_dependency 'cancan', '1.6.8'
+  s.add_dependency 'activemerchant', '~> 1.47.0'
+  s.add_dependency 'acts_as_list', '~> 0.6'
+  s.add_dependency 'awesome_nested_set', '~> 3.0.1'
+  s.add_dependency 'carmen', '~> 1.0.0'
+  s.add_dependency 'cancancan', '~> 1.10.1'
+  s.add_dependency 'deface', '~> 1.0.0'
+  s.add_dependency 'ffaker', '~> 2.0.0'
+  s.add_dependency 'font-awesome-rails', '~> 4.0'
+  s.add_dependency 'friendly_id', '~> 5.1.0'
+  s.add_dependency 'highline', '~> 1.6.18' # Necessary for the install generator
+  s.add_dependency 'httparty', '~> 0.11' # For checking alerts.
+  s.add_dependency 'json', '~> 1.7'
+  s.add_dependency 'kaminari', '~> 0.15', '>= 0.15.1'
+  s.add_dependency 'monetize', '~> 1.1'
+  s.add_dependency 'paperclip', '~> 4.2.0'
+  s.add_dependency 'paranoia', '~> 2.1.0'
+  s.add_dependency 'premailer-rails'
+  s.add_dependency 'rails', '~> 4.2.0'
+  s.add_dependency 'ransack', '~> 1.4.1'
+  s.add_dependency 'responders'
+  s.add_dependency 'state_machines-activerecord', '~> 0.2'
+  s.add_dependency 'stringex'
   s.add_dependency 'truncate_html', '0.9.2'
-  s.add_dependency 'money', '5.1.1'
+  s.add_dependency 'twitter_cldr', '~> 3.0'
 
-  # For checking for alerts
-  s.add_dependency 'httparty', '~> 0.11'
+  s.add_development_dependency 'email_spec', '~> 1.6'
 end

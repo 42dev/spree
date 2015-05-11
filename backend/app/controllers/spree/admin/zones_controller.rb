@@ -1,7 +1,7 @@
 module Spree
   module Admin
     class ZonesController < ResourceController
-      before_filter :load_data, :except => [:index]
+      before_action :load_data, except: :index
 
       def new
         @zone.zone_members.build
@@ -11,9 +11,9 @@ module Spree
 
         def collection
           params[:q] ||= {}
-          params[:q][:s] ||= "ascend_by_name"
+          params[:q][:s] ||= "name asc"
           @search = super.ransack(params[:q])
-          @zones = @search.result.page(params[:page]).per(Spree::Config[:orders_per_page])
+          @zones = @search.result.page(params[:page]).per(params[:per_page])
         end
 
         def load_data

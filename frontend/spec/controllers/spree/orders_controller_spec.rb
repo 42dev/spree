@@ -1,92 +1,134 @@
 require 'spec_helper'
 
-describe Spree::OrdersController do
+describe Spree::OrdersController, :type => :controller do
   let(:user) { create(:user) }
-  let(:order) { mock_model(Spree::Order, :number => "R123", :reload => nil, :save! => true, :coupon_code => nil, :user => user, :completed? => false, :currency => "USD", :token => 'a1b2c3d4')}
-  before do
-    # Don't care about IP address being set here
-    order.stub(:last_ip_address=)
-    Spree::Order.stub(:find).with(1).and_return(order)
-    controller.stub(:try_spree_current_user => user)
-  end
 
-  context "#populate" do
-    before { Spree::Order.stub(:new).and_return(order) }
+  context "Order model mock" do
+    let(:order) do
+      Spree::Order.create!
+    end
+    let(:variant) { create(:variant) }
 
-    it "should create a new order when none specified" do
-      Spree::Order.should_receive(:new).and_return order
-      spree_post :populate, {}, {}
-      session[:order_id].should == order.id
+    before do
+      allow(controller).to receive_messages(:try_spree_current_user => user)
     end
 
-    context "with Variant" do
-      let(:populator) { double('OrderPopulator') }
+    context "#populate" do
+      it "should create a new order when none specified" do
+        spree_post :populate, {}, {}
+        expect(cookies.signed[:guest_token]).not_to be_blank
+        expect(Spree::Order.find_by_guest_token(cookies.signed[:guest_token])).to be_persisted
+      end
+
+      context "with Variant" do
+        it "should handle population" do
+          expect do
+            spree_post :populate, variant_id: variant.id, quantity: 5
+          end.to change { user.orders.count }.by(1)
+          order = user.orders.last
+          expect(response).to redirect_to spree.cart_path
+          expect(order.line_items.size).to eq(1)
+          line_item = order.line_items.first
+          expect(line_item.variant_id).to eq(variant.id)
+          expect(line_item.quantity).to eq(5)
+        end
+
+        it "shows an error when population fails" do
+          request.env["HTTP_REFERER"] = spree.root_path
+          allow_any_instance_of(Spree::LineItem).to(
+            receive(:valid?).and_return(false)
+          )
+          allow_any_instance_of(Spree::LineItem).to(
+            receive_message_chain(:errors, :full_messages).
+              and_return(["Order population failed"])
+          )
+
+          spree_post :populate, variant_id: variant.id, quantity: 5
+
+          expect(response).to redirect_to(spree.root_path)
+          expect(flash[:error]).to eq("Order population failed")
+        end
+
+        it "shows an error when quantity is invalid" do
+          request.env["HTTP_REFERER"] = spree.root_path
+
+          spree_post(
+            :populate,
+            variant_id: variant.id, quantity: -1
+          )
+
+          expect(response).to redirect_to(spree.root_path)
+          expect(flash[:error]).to eq(
+            Spree.t(:please_enter_reasonable_quantity)
+          )
+        end
+      end
+    end
+
+    context "#update" do
+      context "with authorization" do
+        before do
+          allow(controller).to receive :check_authorization
+          allow(controller).to receive_messages current_order: order
+        end
+
+        it "should render the edit view (on failure)" do
+          # email validation is only after address state
+          order.update_column(:state, "delivery")
+          spree_put :update, { :order => { :email => "" } }, { :order_id => order.id }
+          expect(response).to render_template :edit
+        end
+
+        it "should redirect to cart path (on success)" do
+          allow(order).to receive(:update_attributes).and_return true
+          spree_put :update, {}, {:order_id => 1}
+          expect(response).to redirect_to(spree.cart_path)
+        end
+      end
+    end
+
+    context "#empty" do
       before do
-        Spree::OrderPopulator.should_receive(:new).and_return(populator)
+        allow(controller).to receive :check_authorization
       end
 
-      it "should handle single variant/quantity pair" do
-        populator.should_receive(:populate).with("variants" => { 1 => "2" }).and_return(true)
-        spree_post :populate, { :order_id => 1, :variants => { 1 => 2 } }
-        response.should redirect_to spree.cart_path
+      it "should destroy line items in the current order" do
+        allow(controller).to receive(:current_order).and_return(order)
+        expect(order).to receive(:empty!)
+        spree_put :empty
+        expect(response).to redirect_to(spree.cart_path)
+      end
+    end
+
+    # Regression test for #2750
+    context "#update" do
+      before do
+        allow(user).to receive :last_incomplete_spree_order
+        allow(controller).to receive :set_current_order
       end
 
-      it "should handle multiple variant/quantity pairs with shared quantity" do
-        populator.should_receive(:populate).with("products" => { 1 => "2" }, "quantity" => "1").and_return(true)
-        spree_post :populate, { :order_id => 1, :products => { 1 => 2 }, :quantity => 1 }
-        response.should redirect_to spree.cart_path
+      it "cannot update a blank order" do
+        spree_put :update, :order => { :email => "foo" }
+        expect(flash[:error]).to eq(Spree.t(:order_not_found))
+        expect(response).to redirect_to(spree.root_path)
       end
     end
   end
 
-  context "#update" do
+  context "line items quantity is 0" do
+    let(:order) { Spree::Order.create }
+    let(:variant) { create(:variant) }
+    let!(:line_item) { order.contents.add(variant, 1) }
+
     before do
-      order.stub(:update_attributes).and_return true
-      order.stub(:line_items).and_return([])
-      order.stub(:line_items=).with([])
-      order.stub(:last_ip_address=)
-      Spree::Order.stub(:find_by_id_and_currency).and_return(order)
+      allow(controller).to receive(:check_authorization)
+      allow(controller).to receive_messages(:current_order => order)
     end
 
-    it "should not result in a flash success" do
-      spree_put :update, {}, {:order_id => 1}
-      flash[:success].should be_nil
-    end
-
-    it "should render the edit view (on failure)" do
-      order.stub(:update_attributes).and_return false
-      order.stub(:errors).and_return({:number => "has some error"})
-      spree_put :update, {}, {:order_id => 1}
-      response.should render_template :edit
-    end
-
-    it "should redirect to cart path (on success)" do
-      order.stub(:update_attributes).and_return true
-      spree_put :update, {}, {:order_id => 1}
-      response.should redirect_to(spree.cart_path)
-    end
-  end
-
-  context "#empty" do
-    it "should destroy line items in the current order" do
-      controller.stub(:current_order).and_return(order)
-      order.should_receive(:empty!)
-      spree_put :empty
-      response.should redirect_to(spree.cart_path)
-    end
-  end
-
-  # Regression test for #2750
-  context "#update" do
-    before do
-      user.stub :last_incomplete_spree_order
-      controller.stub :set_current_order
-    end
-
-    it "cannot update a blank order" do
-      spree_put :update, :order => { :email => "foo" }
-      flash[:error].should == Spree.t(:order_not_found)
-      response.should redirect_to(spree.root_path)
+    it "removes line items on update" do
+      expect(order.line_items.count).to eq 1
+      spree_put :update, :order => { line_items_attributes: { "0" => { id: line_item.id, quantity: 0 } } }
+      expect(order.reload.line_items.count).to eq 0
     end
   end
 end

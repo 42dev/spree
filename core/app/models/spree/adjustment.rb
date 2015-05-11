@@ -1,10 +1,8 @@
 # Adjustments represent a change to the +item_total+ of an Order. Each adjustment
 # has an +amount+ that can be either positive or negative.
 #
-# Adjustments can be open/closed/finalized
-#
-# Once an adjustment is finalized, it cannot be changed, but an adjustment can
-# toggle between open/closed as needed
+# Adjustments can be "opened" or "closed".
+# Once an adjustment is closed, it will not be automatically updated.
 #
 # Boolean attributes:
 #
@@ -23,18 +21,15 @@
 # total. This allows an adjustment to be preserved if it becomes ineligible so
 # it might be reinstated.
 module Spree
-  class Adjustment < ActiveRecord::Base
-    attr_accessible :amount, :label
-
-    belongs_to :adjustable, polymorphic: true
+  class Adjustment < Spree::Base
+    belongs_to :adjustable, polymorphic: true, touch: true
     belongs_to :source, polymorphic: true
-    belongs_to :originator, polymorphic: true
+    belongs_to :order, class_name: "Spree::Order"
 
+    validates :adjustable, presence: true
+    validates :order, presence: true
     validates :label, presence: true
     validates :amount, numericality: true
-
-    after_save :update_adjustable
-    after_destroy :update_adjustable
 
     state_machine :state, initial: :open do
       event :close do
@@ -44,65 +39,68 @@ module Spree
       event :open do
         transition from: :closed, to: :open
       end
-
-      event :finalize do
-        transition from: [:open, :closed], to: :finalized
-      end
     end
 
-    scope :tax, -> { where(originator_type: 'Spree::TaxRate', adjustable_type: 'Spree::Order') }
+    after_create :update_adjustable_adjustment_total
+    after_destroy :update_adjustable_adjustment_total
+
+    class_attribute :competing_promos_source_types
+
+    self.competing_promos_source_types = ['Spree::PromotionAction']
+
+    scope :open, -> { where(state: 'open') }
+    scope :closed, -> { where(state: 'closed') }
+    scope :tax, -> { where(source_type: 'Spree::TaxRate') }
+    scope :non_tax, -> do
+      source_type = arel_table[:source_type]
+      where(source_type.not_eq('Spree::TaxRate').or source_type.eq(nil))
+    end
     scope :price, -> { where(adjustable_type: 'Spree::LineItem') }
-    scope :shipping, -> { where(originator_type: 'Spree::ShippingMethod') }
+    scope :shipping, -> { where(adjustable_type: 'Spree::Shipment') }
     scope :optional, -> { where(mandatory: false) }
     scope :eligible, -> { where(eligible: true) }
-    scope :charge, -> { where('amount >= 0') }
-    scope :credit, -> { where('amount < 0') }
-    scope :promotion, -> { where(originator_type: 'Spree::PromotionAction') }
+    scope :charge, -> { where("#{quoted_table_name}.amount >= 0") }
+    scope :credit, -> { where("#{quoted_table_name}.amount < 0") }
+    scope :nonzero, -> { where("#{quoted_table_name}.amount != 0") }
+    scope :promotion, -> { where(source_type: 'Spree::PromotionAction') }
     scope :return_authorization, -> { where(source_type: "Spree::ReturnAuthorization") }
+    scope :is_included, -> { where(included: true) }
+    scope :additional, -> { where(included: false) }
+    scope :competing_promos, -> { where(source_type: competing_promos_source_types) }
 
-    # Update the boolean _eligible_ attribute which determines which adjustments
-    # count towards the order's adjustment_total.
-    def set_eligibility
-      result = self.mandatory || (self.amount != 0 && self.eligible_for_originator?)
-      update_attribute_without_callbacks(:eligible, result)
-    end
+    extend DisplayMoney
+    money_methods :amount
 
-    # Allow originator of the adjustment to perform an additional eligibility of the adjustment
-    # Should return _true_ if originator is absent or doesn't implement _eligible?_
-    def eligible_for_originator?
-      return true if originator.nil?
-      !originator.respond_to?(:eligible?) || originator.eligible?(source)
-    end
-
-    # Update both the eligibility and amount of the adjustment. Adjustments 
-    # delegate updating of amount to their Originator when present, but only if
-    # +locked+ is false. Adjustments that are +locked+ will never change their amount.
-    #
-    # order#update_adjustments passes self as the src, this is so calculations can
-    # be performed on the # current values. If we used source it would load the old
-    # record from db for the association
-    def update!
-      return if immutable?
-      originator.update_adjustment(self, source) if originator.present?
-      set_eligibility
+    def closed?
+      state == "closed"
     end
 
     def currency
       adjustable ? adjustable.currency : Spree::Config[:currency]
     end
 
-    def display_amount
-      Spree::Money.new(amount, { currency: currency })
+    def promotion?
+      source_type == 'Spree::PromotionAction'
     end
 
-    def immutable?
-      state != "open"
+    # Passing a target here would always be recommended as it would avoid
+    # hitting the database again and would ensure you're compute values over
+    # the specific object amount passed here.
+    def update!(target = adjustable)
+      return amount if closed? || source.blank?
+      amount = source.compute_amount(target)
+      attributes = { amount: amount, updated_at: Time.now }
+      attributes[:eligible] = source.promotion.eligible?(target) if promotion?
+      update_columns(attributes)
+      amount
     end
 
     private
 
-      def update_adjustable
-        adjustable.update! if adjustable.is_a? Order
-      end
+    def update_adjustable_adjustment_total
+      # Cause adjustable's total to be recalculated
+      Adjustable::AdjustmentsUpdater.update(adjustable)
+    end
+
   end
 end

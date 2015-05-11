@@ -8,13 +8,21 @@ module Spree
           else
             super
           end
-
         rescue ActionView::MissingTemplate => e
-          api_behavior(e)
+          api_behavior
         end
 
         def template
           request.headers['X-Spree-Template'] || controller.params[:template] || options[:default_template]
+        end
+
+        def api_behavior
+          if controller.params[:action] == "destroy"
+            # Render a blank template
+            super
+          else
+            # Do nothing and fallback to the default template
+          end
         end
       end
     end

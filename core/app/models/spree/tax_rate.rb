@@ -1,82 +1,107 @@
 module Spree
-  class DefaultTaxZoneValidator < ActiveModel::Validator
-    def validate(record)
-      if record.included_in_price
-        record.errors.add(:included_in_price, Spree.t(:included_price_validation)) unless Zone.default_tax
-      end
-    end
-  end
-end
+  class TaxRate < Spree::Base
+    acts_as_paranoid
 
-module Spree
-  class TaxRate < ActiveRecord::Base
-    include Spree::Core::CalculatedAdjustments
-    belongs_to :zone, class_name: "Spree::Zone"
-    belongs_to :tax_category, class_name: "Spree::TaxCategory"
+    include Spree::CalculatedAdjustments
+    include Spree::AdjustmentSource
+
+    belongs_to :zone, class_name: "Spree::Zone", inverse_of: :tax_rates
+    belongs_to :tax_category,
+               class_name: "Spree::TaxCategory",
+               inverse_of: :tax_rates
 
     validates :amount, presence: true, numericality: true
     validates :tax_category_id, presence: true
-    validates_with DefaultTaxZoneValidator
 
-    scope :by_zone, ->(zone) { where(zone_id: zone) }
+    scope :by_zone, -> (zone) { where(zone_id: zone.id) }
+    scope :potential_rates_for_zone,
+          -> (zone) do
+            where(zone_id: Spree::Zone.potential_matching_zones(zone).pluck(:id))
+          end
+    scope :for_default_zone,
+          -> { potential_rates_for_zone(Spree::Zone.default_tax) }
+    scope :for_tax_category,
+          -> (category) { where(tax_category_id: category.try(:id)) }
+    scope :included_in_price, -> { where(included_in_price: true) }
 
-    attr_accessible :amount, :tax_category_id, :calculator, :zone_id, :name,
-                    :included_in_price, :show_rate_in_label
+    # Gets the array of TaxRates appropriate for the specified tax zone
+    def self.match(order_tax_zone)
+      return [] unless order_tax_zone
+      potential_rates_for_zone(order_tax_zone)
+    end
 
-    # Gets the array of TaxRates appropriate for the specified order
-    def self.match(order)
-      return [] unless order.tax_zone
-      all.select do |rate|
-        rate.zone == order.tax_zone || rate.zone.contains?(order.tax_zone) || rate.zone.default_tax
+    # Pre-tax amounts must be stored so that we can calculate
+    # correct rate amounts in the future. For example:
+    # https://github.com/spree/spree/issues/4318#issuecomment-34723428
+    def self.store_pre_tax_amount(item, rates)
+      pre_tax_amount = case item
+                       when Spree::LineItem then item.discounted_amount
+                       when Spree::Shipment then item.discounted_cost
+                       end
+
+      included_rates = rates.select(&:included_in_price)
+      if included_rates.any?
+        pre_tax_amount /= (1 + included_rates.map(&:amount).sum)
       end
+
+      item.update_column(:pre_tax_amount, pre_tax_amount)
     end
 
-    def self.adjust(order)
-      order.clear_adjustments!
-      self.match(order).each do |rate|
-        rate.adjust(order)
+    # Deletes all tax adjustments, then applies all applicable rates
+    # to relevant items.
+    def self.adjust(order, items)
+      rates = match(order.tax_zone)
+      tax_categories = rates.map(&:tax_category)
+
+      # using destroy_all to ensure adjustment destroy callback fires.
+      Spree::Adjustment.where(adjustable: items).tax.destroy_all
+
+      relevant_items = items.select do |item|
+        tax_categories.include?(item.tax_category)
       end
-    end
 
-    # For Vat the default rate is the rate that is configured for the default category
-    # It is needed for every price calculation (as all customer facing prices include vat )
-    # The function returns the actual amount, which may be 0 in case of wrong setup, but is never nil
-    def self.default
-      category = TaxCategory.includes(:tax_rates).where(is_default: true).first
-      return 0 unless category
-
-      address ||= Address.new(country_id: Spree::Config[:default_country_id])
-      rate = category.tax_rates.detect { |rate| rate.zone.include? address }.try(:amount)
-
-      rate || 0
-    end
-
-    # Creates necessary tax adjustments for the order.
-    def adjust(order)
-      label = create_label
-      if included_in_price
-        if Zone.default_tax.contains? order.tax_zone
-          order.line_items.each { |line_item| create_adjustment(label, line_item, line_item) }
-        else
-          amount = -1 * calculator.compute(order)
-          label = Spree.t(:refund) + label
-          order.adjustments.create({ amount: amount,
-                                     source: order,
-                                     originator: self,
-                                     state: "closed",
-                                     label: label }, without_protection: true)
+      relevant_items.each do |item|
+        relevant_rates = rates.select do |rate|
+          rate.tax_category == item.tax_category
         end
-      else
-        create_adjustment(label, order, order)
+        store_pre_tax_amount(item, relevant_rates)
+        relevant_rates.each do |rate|
+          rate.adjust(order, item)
+        end
       end
+    end
+
+    def self.included_tax_amount_for(zone, category)
+      return 0 unless zone && category
+      potential_rates_for_zone(zone).
+        included_in_price.
+        for_tax_category(category).
+        pluck(:amount).sum
+    end
+
+    def adjust(order, item)
+      create_adjustment(order, item, included_in_price)
+    end
+
+    def compute_amount(item)
+      compute(item)
     end
 
     private
 
-      def create_label
-        label = ""
-        label << (name.present? ? name : tax_category.name) + " "
-        label << (show_rate_in_label? ? "#{amount * 100}%" : "")
-      end
+    def label
+      Spree.t included_in_price? ? :including_tax : :excluding_tax,
+              scope: "adjustment_labels.tax_rates",
+              name: name.presence || tax_category.name,
+              amount: amount_for_label
+    end
+
+    def amount_for_label
+      return "" unless show_rate_in_label?
+      " " + ActiveSupport::NumberHelper::NumberToPercentageConverter.convert(
+        amount * 100,
+        locale: I18n.locale
+      )
+    end
   end
 end

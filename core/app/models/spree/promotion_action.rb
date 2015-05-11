@@ -1,12 +1,12 @@
-# Base class for all types of promotion action.
+## Base class for all types of promotion action.
 # PromotionActions perform the necessary tasks when a promotion is activated by an event and determined to be eligible.
 module Spree
-  class PromotionAction < ActiveRecord::Base
-    belongs_to :promotion, foreign_key: 'activator_id', class_name: 'Spree::Promotion'
+  class PromotionAction < Spree::Base
+    acts_as_paranoid
+
+    belongs_to :promotion, class_name: 'Spree::Promotion'
 
     scope :of_type, ->(t) { where(type: t) }
-
-    attr_accessible :line_items_string
 
     # This method should be overriden in subclass
     # Updates the state of the order or performs some other action depending on the subclass
@@ -14,6 +14,12 @@ module Spree
     # the key :user which allows user based actions to be performed in addition to actions on the order
     def perform(options = {})
       raise 'perform should be implemented in a sub-class of PromotionAction'
+    end
+
+    protected
+
+    def label
+      Spree.t(:promotion_label, name: promotion.name)
     end
   end
 end

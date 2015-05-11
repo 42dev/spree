@@ -1,29 +1,23 @@
 module Spree
   class TaxonsController < Spree::StoreController
-    rescue_from ActiveRecord::RecordNotFound, :with => :render_404
+    rescue_from ActiveRecord::RecordNotFound, with: :render_404
     helper 'spree/products'
 
     respond_to :html
 
     def show
-      @taxon = Taxon.find_by_permalink!(params[:id])
+      @taxon = Taxon.friendly.find(params[:id])
       return unless @taxon
 
-      @searcher = Spree::Config.searcher_class.new(params.merge(:taxon => @taxon.id))
-      @searcher.current_user = try_spree_current_user
-      @searcher.current_currency = current_currency
+      @searcher = build_searcher(params.merge(taxon: @taxon.id, include_images: true))
       @products = @searcher.retrieve_products
+      @taxonomies = Spree::Taxonomy.includes(root: :children)
     end
 
     private
 
     def accurate_title
-      if @taxon
-        @taxon.seo_title
-      else
-        super
-      end
+      @taxon.try(:seo_title) || super
     end
-
   end
 end

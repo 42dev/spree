@@ -1,7 +1,7 @@
 module Spree
   module Stock
     module Splitter
-      class Weight < Base
+      class Weight < Spree::Stock::Splitter::Base
         attr_reader :packer, :next_splitter
 
         cattr_accessor :threshold do
@@ -20,8 +20,10 @@ module Spree
         def reduce(package)
           removed = []
           while package.weight > self.threshold
-            break if package.contents.size == 1
-            removed << package.contents.shift
+            contents = package.contents_by_weight
+            break if contents.size == 1
+            # Deleting the second heaviest item in the package should yield best results
+            removed << package.contents.delete(contents[1])
           end
           removed
         end
