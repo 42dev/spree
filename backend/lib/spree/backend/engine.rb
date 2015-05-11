@@ -33,7 +33,6 @@ module Spree
           jqPlot/excanvas.min.js
           admin/images/new.js
           jquery.jstree/themes/apple/*
-          fontawesome-webfont*
         ]
       end
 

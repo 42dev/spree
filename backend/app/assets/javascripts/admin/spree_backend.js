@@ -13,6 +13,7 @@
 //= require jquery.adaptivemenu
 //= require equalize
 //= require responsive-tables
+//= require jquery.horizontalNav
 //= require spree
-//= require admin/spree-select2
 //= require_tree .
+

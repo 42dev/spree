@@ -3,13 +3,11 @@ module Spree
     before_validation :adjust_quantity
     belongs_to :order, class_name: "Spree::Order"
     belongs_to :variant, class_name: "Spree::Variant"
-    belongs_to :tax_category, class_name: "Spree::TaxCategory"
 
     has_one :product, through: :variant
     has_many :adjustments, as: :adjustable, dependent: :destroy
 
     before_validation :copy_price
-    before_validation :copy_tax_category
 
     validates :variant, presence: true
     validates :quantity, numericality: {
@@ -22,25 +20,17 @@ module Spree
 
     attr_accessible :quantity, :variant_id
 
-    after_save :update_inventory
+    before_save :update_inventory
+
     after_save :update_order
     after_destroy :update_order
-
-    delegate :name, :description, :should_track_inventory?, to: :variant
 
     attr_accessor :target_shipment
 
     def copy_price
       if variant
         self.price = variant.price if price.nil?
-        self.cost_price = variant.cost_price if cost_price.nil?
         self.currency = variant.currency if currency.nil?
-      end
-    end
-
-    def copy_tax_category
-      if variant
-        self.tax_category = variant.product.tax_category
       end
     end
 
@@ -75,7 +65,7 @@ module Spree
     end
 
     def sufficient_stock?
-      Stock::Quantifier.new(variant).can_supply? quantity
+      Stock::Quantifier.new(variant_id).can_supply? quantity
     end
 
     def insufficient_stock?
@@ -86,29 +76,15 @@ module Spree
       @preferred_shipment = shipment
     end
 
-    # Remove product default_scope `deleted_at: nil`
-    def product
-      variant.product
-    end
-
-    # Remove variant default_scope `deleted_at: nil`
-    def variant
-      Spree::Variant.unscoped { super }
-    end
-
     private
       def update_inventory
-        if changed?
-          Spree::OrderInventory.new(self.order).verify(self, target_shipment)
-        end
+        Spree::OrderInventory.new(self.order).verify(self, target_shipment)
       end
 
       def update_order
-        if changed? || destroyed?
-          # update the order totals, etc.
-          order.create_tax_charge!
-          order.update!
-        end
+        # update the order totals, etc.
+        order.create_tax_charge!
+        order.update!
       end
   end
 end

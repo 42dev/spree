@@ -46,11 +46,21 @@ module Spree
 
       variant = Spree::Variant.find(variant_id)
       if quantity > 0
-        line_item = @order.contents.add(variant, quantity, currency)
-        unless line_item.valid?
-          errors.add(:base, line_item.errors.messages.values.join(" "))
-          return false
+        if check_stock_levels(variant, quantity)
+          @order.contents.add(variant, quantity, currency)
         end
+      end
+    end
+
+    def check_stock_levels(variant, quantity)
+      display_name = %Q{#{variant.name}}
+      display_name += %Q{ (#{variant.options_text})} unless variant.options_text.blank?
+
+      if Stock::Quantifier.new(variant).can_supply? quantity
+        true
+      else
+        errors.add(:base, Spree.t(:out_of_stock, :scope => :order_populator, :item => display_name.inspect))
+        return false
       end
     end
   end

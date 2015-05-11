@@ -40,14 +40,9 @@ module Spree
     end
 
     def line_item_description(variant)
-      ActiveSupport::Deprecation.warn "line_item_description(variant) is deprecated and may be removed from future releases, use line_item_description_text(line_item.description) instead.", caller
-
-      line_item_description_text(variant.product.description)
-    end
-
-    def line_item_description_text description_text
-      if description_text.present?
-        truncate(strip_tags(description_text.gsub('&nbsp;', ' ')), length: 100)
+      description = variant.product.description
+      if description.present?
+        truncate(strip_tags(description.gsub('&nbsp;', ' ')), length: 100)
       else
         Spree.t(:product_has_no_description)
       end

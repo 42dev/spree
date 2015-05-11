@@ -6,23 +6,20 @@ class Spree::Admin::ResourceController < Spree::Admin::BaseController
   rescue_from ActiveRecord::RecordNotFound, :with => :resource_not_found
 
   respond_to :html
+  respond_to :js, :except => [:show, :index]
 
   def new
     invoke_callbacks(:new_action, :before)
     respond_with(@object) do |format|
       format.html { render :layout => !request.xhr? }
-      if request.xhr?
-        format.js   { render :layout => false }
-      end
+      format.js   { render :layout => false }
     end
   end
 
   def edit
     respond_with(@object) do |format|
       format.html { render :layout => !request.xhr? }
-      if request.xhr?
-        format.js   { render :layout => false }
-      end
+      format.js   { render :layout => false }
     end
   end
 
@@ -73,13 +70,13 @@ class Spree::Admin::ResourceController < Spree::Admin::BaseController
       invoke_callbacks(:destroy, :after)
       flash[:success] = flash_message_for(@object, :successfully_removed)
       respond_with(@object) do |format|
-        format.html { redirect_to location_after_destroy }
+        format.html { redirect_to collection_url }
         format.js   { render :partial => "spree/admin/shared/destroy" }
       end
     else
       invoke_callbacks(:destroy, :fails)
       respond_with(@object) do |format|
-        format.html { redirect_to location_after_destroy }
+        format.html { redirect_to collection_url }
       end
     end
   end
@@ -199,10 +196,6 @@ class Spree::Admin::ResourceController < Spree::Admin::BaseController
       else
         model_class.scoped
       end
-    end
-
-    def location_after_destroy
-      collection_url
     end
 
     def location_after_save

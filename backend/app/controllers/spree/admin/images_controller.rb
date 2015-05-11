@@ -5,12 +5,9 @@ module Spree
 
       create.before :set_viewable
       update.before :set_viewable
+      destroy.before :destroy_before
 
       private
-
-        def location_after_destroy
-          admin_product_images_url(@product)
-        end
 
         def location_after_save
           admin_product_images_url(@product)
@@ -27,6 +24,10 @@ module Spree
         def set_viewable
           @image.viewable_type = 'Spree::Variant'
           @image.viewable_id = params[:image][:viewable_id]
+        end
+
+        def destroy_before
+          @viewable = @image.viewable
         end
 
     end

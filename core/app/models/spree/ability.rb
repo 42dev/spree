@@ -47,16 +47,18 @@ module Spree
           order.user == user || order.token && token == order.token
         end
         can :create, Order
-        can [:index, :read], Product
-        can [:index, :read], ProductProperty
-        can [:index, :read], Property
-        can :create, Spree.user_class
-        can [:read, :update, :destroy], Spree.user_class, id: user.id
-        can [:index, :read], State
-        can [:index, :read], Taxon
-        can [:index, :read], Taxonomy
-        can [:index, :read], Variant
-        can [:index, :read], Zone
+
+        can :read, Address do |address|
+          address.user == user
+        end
+
+        #############################
+        can :read, Product
+        can :index, Product
+        #############################
+        can :read, Taxon
+        can :index, Taxon
+        #############################
       end
 
       #include any abilities registered by extensions, etc.

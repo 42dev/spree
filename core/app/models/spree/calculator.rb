@@ -21,7 +21,7 @@ module Spree
 
     # Returns all calculators applicable for kind of work
     def self.calculators
-      Rails.application.config.spree.calculators
+      Rails.application.config.spree.calculators.all
     end
 
     def to_s

@@ -3,42 +3,34 @@ module Spree
     class ReportsController < Spree::Admin::BaseController
       respond_to :html
 
-      class << self
-        def available_reports
-          @@available_reports
-        end
-
-        def add_available_report!(report_key, report_description_key = nil)
-          if report_description_key.nil?
-            report_description_key = "#{report_key}_description"
-          end
-          @@available_reports[report_key] = {name: Spree.t(report_key), description: Spree.t(report_description_key)}
-        end
-      end
-
-      def initialize
-        super 
-        ReportsController.add_available_report!(:sales_total)
-      end
+      AVAILABLE_REPORTS = {
+        :sales_total => { :name => Spree.t(:sales_total), :description => Spree.t(:sales_total_description) }
+      }
 
       def index
-        @reports = ReportsController.available_reports
+        @reports = AVAILABLE_REPORTS
       end
 
       def sales_total
         params[:q] = {} unless params[:q]
 
-        if params[:q][:completed_at_gt].blank?
-          params[:q][:completed_at_gt] = Time.zone.now.beginning_of_month
+        if params[:q][:created_at_gt].blank?
+          params[:q][:created_at_gt] = Time.zone.now.beginning_of_month
         else
-          params[:q][:completed_at_gt] = Time.zone.parse(params[:q][:completed_at_gt]).beginning_of_day rescue Time.zone.now.beginning_of_month
+          params[:q][:created_at_gt] = Time.zone.parse(params[:q][:created_at_gt]).beginning_of_day rescue Time.zone.now.beginning_of_month
         end
 
-        if params[:q] && !params[:q][:completed_at_lt].blank?
-          params[:q][:completed_at_lt] = Time.zone.parse(params[:q][:completed_at_lt]).end_of_day rescue ""
+        if params[:q] && !params[:q][:created_at_lt].blank?
+          params[:q][:created_at_lt] = Time.zone.parse(params[:q][:created_at_lt]).end_of_day rescue ""
         end
 
-        params[:q][:s] ||= "completed_at desc"
+        if params[:q].delete(:completed_at_not_null) == "1"
+          params[:q][:completed_at_not_null] = true
+        else
+          params[:q][:completed_at_not_null] = false
+        end
+
+        params[:q][:s] ||= "created_at desc"
 
         @search = Order.complete.ransack(params[:q])
         @orders = @search.result
@@ -57,8 +49,6 @@ module Spree
       def model_class
         Spree::Admin::ReportsController
       end
-
-      @@available_reports = {}
 
     end
   end

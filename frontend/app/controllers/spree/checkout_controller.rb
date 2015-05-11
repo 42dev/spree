@@ -6,7 +6,7 @@ module Spree
   class CheckoutController < Spree::StoreController
     ssl_required
 
-    before_filter :load_order_with_lock
+    before_filter :load_order
 
     before_filter :ensure_order_not_completed
     before_filter :ensure_checkout_allowed
@@ -15,9 +15,6 @@ module Spree
 
     before_filter :associate_user
     before_filter :check_authorization
-    before_filter :apply_coupon_code
-
-    before_filter :setup_for_current_state
 
     helper 'spree/orders'
 
@@ -27,9 +24,10 @@ module Spree
     def update
       if @order.update_attributes(object_params)
         fire_event('spree.checkout.update')
+        return if after_update_attributes
 
         unless @order.next
-          flash[:error] = @order.errors.full_messages.join("\n")
+          flash[:error] = Spree.t(:payment_processing_failed)
           redirect_to checkout_state_path(@order.state) and return
         end
 
@@ -55,13 +53,6 @@ module Spree
             redirect_to checkout_state_path(@order.checkout_steps.first)
           end
         end
-
-        # Fix for #4117
-        # If confirmation of payment fails, redirect back to payment screen
-        if params[:state] == "confirm" && @order.payments.valid.empty?
-          flash.keep
-          redirect_to checkout_state_path("payment")
-        end
       end
 
       # Should be overriden if you have areas of your checkout that don't match
@@ -70,14 +61,15 @@ module Spree
         false
       end
 
-      def load_order_with_lock
-        @order = current_order(lock: true)
+      def load_order
+        @order = current_order
         redirect_to spree.cart_path and return unless @order
 
         if params[:state]
           redirect_to checkout_state_path(@order.state) if @order.can_go_to_state?(params[:state]) && !skip_state_validation?
           @order.state = params[:state]
         end
+        setup_for_current_state
       end
 
       def ensure_checkout_allowed
@@ -106,7 +98,7 @@ module Spree
       # attributes for a single payment and its source, discarding attributes
       # for payment methods other than the one selected
       def object_params
-        # has_checkout_step? check is necessary due to issue described in #2910
+        # respond_to check is necessary due to issue described in #2910
         if @order.has_checkout_step?("payment") && @order.payment?
           if params[:payment_source].present?
             source_params = params.delete(:payment_source)[params[:order][:payments_attributes].first[:payment_method_id].underscore]
@@ -128,14 +120,9 @@ module Spree
         send(method_name) if respond_to?(method_name, true)
       end
 
-      # Skip setting ship address if order doesn't have a delivery checkout step
-      # to avoid triggering validations on shipping address
       def before_address
         @order.bill_address ||= Address.default
-
-        if @order.checkout_steps.include? "delivery"
-          @order.ship_address ||= Address.default
-        end
+        @order.ship_address ||= Address.default
       end
 
       def before_delivery
@@ -146,18 +133,15 @@ module Spree
       end
 
       def before_payment
-        if @order.checkout_steps.include? "delivery"
-          packages = @order.shipments.map { |s| s.to_package }
-          @differentiator = Spree::Stock::Differentiator.new(@order, packages)
-          @differentiator.missing.each do |variant, quantity|
-            @order.contents.remove(variant, quantity)
-          end
+        packages = @order.shipments.map { |s| s.to_package }
+        @differentiator = Spree::Stock::Differentiator.new(@order, packages)
+        @differentiator.missing.each do |variant, quantity|
+          @order.contents.remove(variant, quantity)
         end
       end
 
-      def rescue_from_spree_gateway_error(exception)
-        flash.now[:error] = Spree.t(:spree_gateway_error_flash_for_checkout)
-        @order.errors.add(:base, exception.message)
+      def rescue_from_spree_gateway_error
+        flash[:error] = Spree.t(:spree_gateway_error_flash_for_checkout)
         render :edit
       end
 
@@ -165,17 +149,15 @@ module Spree
         authorize!(:edit, current_order, session[:access_token])
       end
 
-      def apply_coupon_code
-        if params[:order] && params[:order][:coupon_code]
-          @order.coupon_code = params[:order][:coupon_code] 
-
-          coupon_result = Spree::Promo::CouponApplicator.new(@order).apply
-          if coupon_result[:coupon_applied?]
-            flash[:success] = coupon_result[:success] if coupon_result[:success].present?
-          else
-            flash.now[:error] = coupon_result[:error]
-            respond_with(@order) { |format| format.html { render :edit } } and return
-          end
+      def after_update_attributes
+        coupon_result = Spree::Promo::CouponApplicator.new(@order).apply
+        if coupon_result[:coupon_applied?]
+          flash[:success] = coupon_result[:success] if coupon_result[:success].present?
+          return false
+        else
+          flash[:error] = coupon_result[:error]
+          respond_with(@order) { |format| format.html { render :edit } }
+          return true
         end
       end
   end

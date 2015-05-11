@@ -18,6 +18,7 @@ html.ie {
   }
   .select2-search {
     &:before {
+      position: relative;
       z-index: 10000;
       content: '\f002' !important;
     }

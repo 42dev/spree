@@ -23,9 +23,7 @@ module Spree
 
   private
 
-    # Returns all products that match this calculator, but only if the calculator
-    # is attached to a promotion. If attached to a ShippingMethod, nil is returned.
-    # Copied from per_item.rb
+    # Returns all products that match the promotion's rule.
     def matching_products
       if compute_on_promotion?
         self.calculable.promotion.rules.map do |rule|

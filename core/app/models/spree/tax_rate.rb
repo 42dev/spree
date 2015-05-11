@@ -10,7 +10,6 @@ end
 
 module Spree
   class TaxRate < ActiveRecord::Base
-    acts_as_paranoid
     include Spree::Core::CalculatedAdjustments
     belongs_to :zone, class_name: "Spree::Zone"
     belongs_to :tax_category, class_name: "Spree::TaxCategory"
@@ -26,17 +25,14 @@ module Spree
 
     # Gets the array of TaxRates appropriate for the specified order
     def self.match(order)
-      order_zone = order.tax_zone
-      return [] unless order_zone
-      includes(zone: { zone_members: :zoneable }).all.select do |rate|
-        rate.zone == order_zone || rate.zone.contains?(order_zone) || rate.zone.default_tax
+      return [] unless order.tax_zone
+      all.select do |rate|
+        rate.zone == order.tax_zone || rate.zone.contains?(order.tax_zone) || rate.zone.default_tax
       end
     end
 
     def self.adjust(order)
-      order.adjustments.tax.destroy_all
-      order.line_item_adjustments.where(originator_type: 'Spree::TaxRate').destroy_all
-
+      order.clear_adjustments!
       self.match(order).each do |rate|
         rate.adjust(order)
       end
