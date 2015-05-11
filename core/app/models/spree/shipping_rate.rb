@@ -22,9 +22,5 @@ module Spree
       Spree::Money.new(price, { currency: currency })
     end
     alias_method :display_cost, :display_price
-
-    def shipping_method
-      Spree::ShippingMethod.unscoped { super }
-    end
   end
 end

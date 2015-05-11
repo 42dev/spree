@@ -13,23 +13,20 @@ module Spree
     end
 
     def update
-      @order = current_order(lock: true)
+      @order = current_order
       unless @order
         flash[:error] = Spree.t(:order_not_found)
         redirect_to root_path and return
       end
 
       if @order.update_attributes(params[:order])
-        @order.line_items = @order.line_items.select {|li| li.quantity > 0 }
-        @order.ensure_updated_shipments
         return if after_update_attributes
-
+        @order.line_items = @order.line_items.select {|li| li.quantity > 0 }
         fire_event('spree.order.contents_changed')
-
         respond_with(@order) do |format|
           format.html do
             if params.has_key?(:checkout)
-              @order.next if @order.cart?
+              @order.next_transition.run_callbacks if @order.cart?
               redirect_to checkout_state_path(@order.checkout_steps.first)
             else
               redirect_to cart_path
@@ -41,18 +38,17 @@ module Spree
       end
     end
 
+
     # Shows the current incomplete order from the session
     def edit
-      @order = current_order(create_order_if_necessary: true)
+      @order = current_order(true)
       associate_user
     end
 
     # Adds a new item to the order (creating a new order if none already exists)
     def populate
-      populator = Spree::OrderPopulator.new(current_order(create_order_if_necessary: true), current_currency)
+      populator = Spree::OrderPopulator.new(current_order(true), current_currency)
       if populator.populate(params.slice(:products, :variants, :quantity))
-        current_order.ensure_updated_shipments
-
         fire_event('spree.cart.add')
         fire_event('spree.order.contents_changed')
         respond_with(@order) do |format|
@@ -95,7 +91,7 @@ module Spree
         flash[:success] = coupon_result[:success] if coupon_result[:success].present?
         return false
       else
-        flash.now[:error] = coupon_result[:error]
+        flash[:error] = coupon_result[:error]
         respond_with(@order) { |format| format.html { render :edit } }
         return true
       end

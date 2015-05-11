@@ -6,20 +6,21 @@ module Spree
 
         included do
           before_filter :force_non_ssl_redirect, :if => Proc.new { Spree::Config[:redirect_https_to_http] }
-          class_attribute :ssl_allowed_actions
+          before_filter :force_ssl_redirect, :if => Proc.new { Rails.application.config.force_ssl }
 
           def self.ssl_allowed(*actions)
-            self.ssl_allowed_actions ||= []
-            self.ssl_allowed_actions.concat actions
+            class_attribute :ssl_allowed_actions
+            self.ssl_allowed_actions = actions
           end
 
           def self.ssl_required(*actions)
-            ssl_allowed *actions
+            class_attribute :ssl_required_actions
+            self.ssl_required_actions = actions
             if ssl_supported?
-              if actions.empty? or Rails.application.config.force_ssl
+              if ssl_required_actions.empty? or Rails.application.config.force_ssl
                 force_ssl
               else
-                force_ssl :only => actions
+                force_ssl :only => ssl_required_actions
               end
             end
           end
@@ -31,30 +32,36 @@ module Spree
           end
 
           private
-            def ssl_allowed?
-              (!ssl_allowed_actions.nil? && (ssl_allowed_actions.empty? || ssl_allowed_actions.include?(action_name.to_sym)))
-            end
 
             # Redirect the existing request to use the HTTP protocol.
             #
             # ==== Parameters
             # * <tt>host</tt> - Redirect to a different host name
             def force_non_ssl_redirect(host = nil)
-              if request.ssl? && !ssl_allowed?
-                if request.get?
-                  redirect_options = {
-                    :protocol => 'http://',
-                    :host     => host || request.host,
-                    :path     => request.fullpath,
-                  }
-                  flash.keep if respond_to?(:flash)
-                  insecure_url = ActionDispatch::Http::URL.url_for(redirect_options)
-                  redirect_to insecure_url, :status => :moved_permanently
-                else
-                  render :text => Spree.t(:change_protocol, :scope => :ssl), :status => :upgrade_required
-                end
+              return true if defined?(ssl_allowed_actions) and ssl_allowed_actions.include?(action_name.to_sym)
+              if request.ssl? and (!defined?(ssl_required_actions) or !ssl_required_actions.include?(action_name.to_sym))
+                redirect_options = {:protocol => 'http://', :status => :moved_permanently}
+                redirect_options.merge!(:host => host) if host
+                redirect_options.merge!(:params => request.query_parameters)
+                flash.keep if respond_to?(:flash)
+                redirect_to redirect_options
               end
             end
+
+            # Redirect the existing request to use the HTTPS protocol.
+            #
+            # ==== Parameters
+            # * <tt>host</tt> - Redirect to a different host name
+            def force_ssl_redirect(host = nil)
+              unless request.ssl?
+                redirect_options = {:protocol => 'https://', :status => :moved_permanently}
+                redirect_options.merge!(:host => host) if host
+                redirect_options.merge!(:params => request.query_parameters)
+                flash.keep if respond_to?(:flash)
+                redirect_to redirect_options
+              end
+            end
+
         end
       end
     end

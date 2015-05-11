@@ -44,9 +44,6 @@ functionality or fixing a bug, we need tests!
 to the latest stable branches and master branch, you will only need to submit one
 pull request.
 
-5. If a PR does not apply cleanly to one of its targeted branches, then a separate
-PR should be created that does. For instance, if a PR applied to master & 2-1-stable but not 2-0-stable, then there should be one PR for master & 2-1-stable and another, separate PR for 2-0-stable.
-
 At this point you're waiting on us. We like to at least comment on, if not
 accept, pull requests within three business days (and, typically, one business
 day). We may suggest some changes or improvements or alternatives.
@@ -64,7 +61,7 @@ Syntax:
 * Two spaces, no tabs.
 * No trailing whitespace. Blank lines should not have any space.
 * Prefer &&/|| over and/or.
-* `MyClass.my_method(my_arg)` not `my_method( my_arg )` or `my_method my_arg`.
+* `MyClass.my_method(my_arg)` not `my_method( my_arg )` or my_method my_arg.
 * `a = b` and not `a=b`.
 * `a_method { |block| ... }` and not `a_method { | block | ... }`
 * Follow the conventions you see used in the source already.

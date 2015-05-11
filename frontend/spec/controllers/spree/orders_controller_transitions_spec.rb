@@ -22,7 +22,6 @@ module Spree
 
       it "correctly calls the transition callback" do
         order.did_transition.should be_nil
-        order.line_items << FactoryGirl.create(:line_item)
         spree_put :update, { :checkout => "checkout" }, { :order_id => 1}
         order.did_transition.should be_true
       end

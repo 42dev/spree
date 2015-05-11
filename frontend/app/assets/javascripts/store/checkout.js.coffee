@@ -2,15 +2,16 @@ Spree.disableSaveOnClick = ->
   ($ 'form.edit_order').submit ->
     ($ this).find(':submit, :image').attr('disabled', true).removeClass('primary').addClass 'disabled'
 
+Spree.Checkout = {}
+
 Spree.ready ($) ->
-  Spree.Checkout = {}
   if ($ '#checkout_form_address').is('*')
     ($ '#checkout_form_address').validate()
 
     getCountryId = (region) ->
-      $('#' + region + 'country select').val()
+      $('p#' + region + 'country select').val()
 
-    Spree.updateState = (region) ->
+    updateState = (region) ->
       countryId = getCountryId(region)
       if countryId?
         unless Spree.Checkout[countryId]?
@@ -18,15 +19,15 @@ Spree.ready ($) ->
             Spree.Checkout[countryId] =
               states: data.states
               states_required: data.states_required
-            Spree.fillStates(Spree.Checkout[countryId], region)
+            fillStates(Spree.Checkout[countryId], region)
         else
-          Spree.fillStates(Spree.Checkout[countryId], region)
+          fillStates(Spree.Checkout[countryId], region)
 
-    Spree.fillStates = (data, region) ->
+    fillStates = (data, region) ->
       statesRequired = data.states_required
       states = data.states
 
-      statePara = ($ '#' + region + 'state')
+      statePara = ($ 'p#' + region + 'state')
       stateSelect = statePara.find('select')
       stateInput = statePara.find('input')
       stateSpanRequired = statePara.find('state-required')
@@ -60,13 +61,13 @@ Spree.ready ($) ->
         stateInput.removeClass('hidden')
         stateSelect.removeClass('required')
 
-    ($ '#bcountry select').change ->
-      Spree.updateState 'b'
+    ($ 'p#bcountry select').change ->
+      updateState 'b'
 
-    ($ '#scountry select').change ->
-      Spree.updateState 's'
+    ($ 'p#scountry select').change ->
+      updateState 's'
 
-    Spree.updateState 'b'
+    updateState 'b'
 
     order_use_billing = ($ 'input#order_use_billing')
     order_use_billing.change ->
@@ -79,7 +80,7 @@ Spree.ready ($) ->
       else
         ($ '#shipping .inner').show()
         ($ '#shipping .inner input, #shipping .inner select').prop 'disabled', false
-        Spree.updateState('s')
+        updateState('s')
     
     update_shipping_form_state order_use_billing
 

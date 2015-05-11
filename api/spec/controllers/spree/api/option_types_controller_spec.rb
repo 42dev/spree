@@ -69,7 +69,7 @@ module Spree
     it "cannot delete an option type" do
       api_delete :destroy, :id => option_type.id
       assert_unauthorized!
-      lambda { option_type.reload }.should_not raise_error
+      lambda { option_type.reload }.should_not raise_error(ActiveRecord::RecordNotFound)
     end
 
     context "as an admin" do

@@ -77,9 +77,11 @@ module Spree
     end
 
     context "pagination" do
+      default_per_page(1)
+
       it "can select the next page of variants" do
         second_variant = create(:variant)
-        api_get :index, :page => 2, :per_page => 1
+        api_get :index, :page => 2
         json_response["variants"].first.should have_attributes(attributes)
         json_response["total_count"].should == 3
         json_response["current_page"].should == 2
@@ -87,42 +89,27 @@ module Spree
       end
     end
 
-    context "single variant" do
+    it "can see a single variant" do
+      api_get :show, :id => variant.to_param
+      json_response.should have_attributes(attributes)
+      option_values = json_response["option_values"]
+      option_values.first.should have_attributes([:name,
+                                                 :presentation,
+                                                 :option_type_name,
+                                                 :option_type_id])
+    end
 
-      it "can see a single variant" do
-        api_get :show, :id => variant.to_param
-        json_response.should have_attributes(attributes)
-        option_values = json_response["option_values"]
-        option_values.first.should have_attributes([:name,
-                                                    :presentation,
-                                                    :option_type_name,
-                                                    :option_type_id])
-      end
+    it "can see a single variant with images" do
+      variant.images.create!(:attachment => image("thinking-cat.jpg"))
 
-      it "can see a single variant with images" do
-        variant.images.create!(:attachment => image("thinking-cat.jpg"))
+      api_get :show, :id => variant.to_param
 
-        api_get :show, :id => variant.to_param
-
-        json_response.should have_attributes(attributes + [:images])
-        option_values = json_response["option_values"]
-        option_values.first.should have_attributes([:name,
-                                                    :presentation,
-                                                    :option_type_name,
-                                                    :option_type_id])
-      end
-
-      it 'shows variant image urls' do
-        variant.images.create!(:attachment => image("thinking-cat.jpg"))
-
-        api_get :show, :id => variant.to_param
-
-        images = json_response["images"]
-        image = images.first
-
-        expect(image).to have_attributes [:mini_url, :small_url, :product_url, :large_url]
-      end
-
+      json_response.should have_attributes(attributes + [:images])
+      option_values = json_response["option_values"]
+      option_values.first.should have_attributes([:name,
+                                                 :presentation,
+                                                 :option_type_name,
+                                                 :option_type_id])
     end
 
     it "can learn how to create a new variant" do
@@ -180,7 +167,7 @@ module Spree
       it "can delete a variant" do
         api_delete :destroy, :id => variant.to_param
         response.status.should == 204
-        lambda { Spree::Variant.find(variant.id) }.should raise_error(ActiveRecord::RecordNotFound)
+        lambda { variant.reload }.should raise_error(ActiveRecord::RecordNotFound)
       end
     end
 

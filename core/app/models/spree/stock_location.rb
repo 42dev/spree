@@ -9,24 +9,11 @@ module Spree
     validates_presence_of :name
 
     attr_accessible :name, :active, :address1, :address2, :city, :zipcode,
-        :backorderable_default, :state_name, :state_id, :country_id, :phone,
-        :country_id, :propagate_all_variants, :admin_name
+                    :state_name, :state_id, :country_id, :phone, :country_id
 
     scope :active, -> { where(active: true) }
 
-    after_create :create_stock_items, :if => "self.propagate_all_variants?"
-
-    # Wrapper for creating a new stock item respecting the backorderable config 
-    def propagate_variant(variant)
-      self.stock_items.create!(variant: variant, backorderable: self.backorderable_default)
-    end
-
-    # Return either an existing stock item or create a new one. Useful in
-    # scenarios where the user might not know whether there is already a stock
-    # item for a given variant
-    def set_up_stock_item(variant)
-      self.stock_item(variant) || propagate_variant(variant)
-    end
+    after_create :create_stock_items
 
     def stock_item(variant)
       stock_items.where(variant_id: variant).order(:id).first
@@ -46,11 +33,6 @@ module Spree
 
     def restock(variant, quantity, originator = nil)
       move(variant, quantity, originator)
-    end
-
-    def restock_backordered(variant, quantity, originator = nil)
-      item = stock_item_or_create(variant)
-      item.update_column(:count_on_hand, item.count_on_hand + quantity)
     end
 
     def unstock(variant, quantity, originator = nil)
@@ -81,8 +63,11 @@ module Spree
     end
 
     private
+
       def create_stock_items
-        Variant.find_each { |variant| self.propagate_variant(variant) }
+        Spree::Variant.find_each do |v|
+          self.stock_items.create!(variant: v)
+        end
       end
   end
 end

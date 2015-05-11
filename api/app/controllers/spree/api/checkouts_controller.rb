@@ -1,48 +1,28 @@
 module Spree
   module Api
     class CheckoutsController < Spree::Api::BaseController
-      before_filter :associate_user, only: :update
+      before_filter :load_order, :only => [:update, :next]
+      before_filter :associate_user, :only => :update
 
       include Spree::Core::ControllerHelpers::Auth
       include Spree::Core::ControllerHelpers::Order
-      # This before_filter comes from Spree::Core::ControllerHelpers::Order
-      skip_before_filter :set_current_order
 
       respond_to :json
 
       def create
         @order = Order.build_from_api(current_api_user, nested_params)
-        respond_with(@order, default_template: 'spree/api/orders/show', status: 201)
-      end
-
-      def next
-        load_order(true)
-        authorize! :update, @order, params[:order_token]
-        @order.next!
-        respond_with(@order, default_template: 'spree/api/orders/show', status: 200)
-      rescue StateMachine::InvalidTransition
-        respond_with(@order, default_template: 'spree/api/orders/could_not_transition', status: 422)
-      end
-
-      def advance
-        load_order(true)
-        authorize! :update, @order, params[:order_token]
-        while @order.next; end
-        respond_with(@order, default_template: 'spree/api/orders/show', status: 200)
-      end
-
-      def show
-        redirect_to(api_order_path(params[:id]), status: 301)
+        respond_with(@order, :default_template => 'spree/api/orders/show', :status => 201)
       end
 
       def update
-        load_order(true)
         authorize! :update, @order, params[:order_token]
         order_params = object_params
         user_id = order_params.delete(:user_id)
         line_items = order_params.delete("line_items_attributes")
         if @order.update_attributes(order_params)
           @order.update_line_items(line_items)
+          # TODO: Replace with better code when we switch to strong_parameters
+          # Also remove above user_id stripping
           if current_api_user.has_spree_role?("admin") && user_id.present?
             @order.associate_user!(Spree.user_class.find(user_id))
           end
@@ -52,6 +32,14 @@ module Spree
         else
           invalid_resource!(@order)
         end
+      end
+
+      def next
+        @order.next!
+        authorize! :update, @order, params[:order_token]
+        respond_with(@order, :default_template => 'spree/api/orders/show', :status => 200)
+        rescue StateMachine::InvalidTransition
+          respond_with(@order, :default_template => 'spree/api/orders/could_not_transition', :status => 422)
       end
 
       private
@@ -81,8 +69,9 @@ module Spree
           false
         end
 
-        def load_order(lock = false)
-          @order = Spree::Order.lock(lock).find_by_number!(params[:id])
+        def load_order
+          @order = Spree::Order.find_by_number!(params[:id])
+          authorize! :read, @order, params[:order_token]
           raise_insufficient_quantity and return if @order.insufficient_stock_lines.present?
           @order.state = params[:state] if params[:state]
           state_callback(:before)

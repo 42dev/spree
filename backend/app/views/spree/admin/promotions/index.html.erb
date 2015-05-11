@@ -8,7 +8,12 @@
   </li>
 <% end %>
 
-<% if @promotions.any? %>
+<% unless @promotions.any? %>
+  <div class="no-objects-found">
+    <%= Spree.t(:no_promotions_found) %>.
+    <%= link_to Spree.t(:add_one), spree.new_admin_promotion_path %>!
+  </div>
+<% else %>
   <table class="index">
     <colgroup>
       <col style="width: 20%">
@@ -44,9 +49,4 @@
       <% end %>
     </tbody>
   </table>
-<% else %>
-  <div class="alpha twelve columns no-objects-found">
-    <%= Spree.t(:no_resource_found, resource: I18n.t(:other, scope: 'activerecord.models.spree/promotion')) %>,
-    <%= link_to Spree.t(:add_one), spree.new_admin_promotion_path %>!
-  </div>
 <% end %>

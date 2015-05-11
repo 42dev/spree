@@ -11,9 +11,7 @@ module Spree
     before { stub_authentication! }
 
     context "as a normal user" do
-      before do
-        controller.stub :current_api_user => user
-      end
+      before { Spree::LegacyUser.stub :find_by_spree_api_key => user }
 
       it "can get own details" do
         api_get :show, :id => user.id

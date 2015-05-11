@@ -8,13 +8,11 @@ module Spree
           @taxons = taxonomy.root.children
         else
           if params[:ids]
-            @taxons = Taxon.accessible_by(current_ability, :read).where(:id => params[:ids].split(","))
+            @taxons = Taxon.where(:id => params[:ids].split(","))
           else
-            @taxons = Taxon.accessible_by(current_ability, :read).order(:taxonomy_id, :lft).ransack(params[:q]).result
+            @taxons = Taxon.ransack(params[:q]).result
           end
         end
-
-        @taxons = @taxons.page(params[:page]).per(params[:per_page])
         respond_with(@taxons)
       end
 

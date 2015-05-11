@@ -1,6 +1,5 @@
 module Spree
   class PaymentMethod < ActiveRecord::Base
-    acts_as_paranoid
     DISPLAY = [:both, :front_end, :back_end]
     default_scope where(deleted_at: nil)
 
@@ -38,6 +37,10 @@ module Spree
 
     def method_type
       type.demodulize.downcase
+    end
+
+    def destroy
+      touch :deleted_at
     end
 
     def self.find_with_destroyed *args

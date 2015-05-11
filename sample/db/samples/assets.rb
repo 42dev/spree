@@ -151,7 +151,6 @@ products[:ror_baseball_jersey].variants.each do |variant|
 end
 
 images.each do |variant, attachments|
-  puts "Loading images for #{variant.name}"
   attachments.each do |attachment|
     variant.images.create!(attachment)
   end

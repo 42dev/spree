@@ -55,7 +55,7 @@ describe Spree::Order do
 
   context "#associate_user!" do
     it "should associate a user with a persisted order" do
-      order = FactoryGirl.create(:order_with_line_items, created_by: nil)
+      order = FactoryGirl.create(:order_with_line_items)
       user = FactoryGirl.create(:user)
 
       order.user = nil
@@ -63,34 +63,12 @@ describe Spree::Order do
       order.associate_user!(user)
       order.user.should == user
       order.email.should == user.email
-      order.created_by.should == user
 
       # verify that the changes we made were persisted
       order.reload
       order.user.should == user
       order.email.should == user.email
-      order.created_by.should == user
     end
-
-    it "should not overwrite the created_by if it already is set" do
-      creator = create(:user)
-      order = FactoryGirl.create(:order_with_line_items, created_by: creator)
-      user = FactoryGirl.create(:user)
-
-      order.user = nil
-      order.email = nil
-      order.associate_user!(user)
-      order.user.should == user
-      order.email.should == user.email
-      order.created_by.should == creator
-
-      # verify that the changes we made were persisted
-      order.reload
-      order.user.should == user
-      order.email.should == user.email
-      order.created_by.should == creator
-    end
-
 
     it "should associate a user with a non-persisted order" do
       order = Spree::Order.new
@@ -147,18 +125,6 @@ describe Spree::Order do
     end
   end
 
-  context "checking if order is paid" do
-    context "payment_state is paid" do
-      before { order.stub payment_state: 'paid' }
-      it { expect(order).to be_paid }
-    end
-
-    context "payment_state is credit_owned" do
-      before { order.stub payment_state: 'credit_owed' }
-      it { expect(order).to be_paid }
-    end
-  end
-
   context "#finalize!" do
     let(:order) { Spree::Order.create }
     it "should set completed_at" do
@@ -199,7 +165,7 @@ describe Spree::Order do
     end
 
     it "should send an order confirmation email" do
-      mail_message = double "Mail::Message"
+      mail_message = mock "Mail::Message"
       Spree::OrderMailer.should_receive(:confirm_email).with(order.id).and_return mail_message
       mail_message.should_receive :deliver
       order.finalize!
@@ -211,56 +177,33 @@ describe Spree::Order do
     end
 
     it "should freeze all adjustments" do
-      # Stub these methods as they're called due to a callback
+      # Stub this method as it's called due to a callback
       # and it's irrelevant to this test
       order.stub :has_available_shipment
-      order.stub :has_available_payment
+
       Spree::OrderMailer.stub_chain :confirm_email, :deliver
-      adjustments = double
-      order.stub :adjustments => adjustments
-      expect(adjustments).to receive(:update_all).with(state: 'closed')
+      adjustment1 = mock_model(Spree::Adjustment, :mandatory => true)
+      adjustment2 = mock_model(Spree::Adjustment, :mandatory => false)
+      order.stub :adjustments => [adjustment1, adjustment2]
+      adjustment1.should_receive(:update_column).with("state", "closed")
+      adjustment2.should_receive(:update_column).with("state", "closed")
       order.finalize!
     end
 
     it "should log state event" do
+      order.state_changes.should_receive(:create).exactly(3).times #order, shipment & payment state changes
       order.finalize!
-      order_changes = order.state_changes.where(:name => "order")
-      order_changes.count.should == 1
-      expect(order_changes.first.previous_state).to eq('cart')
-      expect(order_changes.first.next_state).to eq('complete')
-      payment_changes = order.state_changes.where(:name => "payment")
-      expect(payment_changes.first.previous_state).to be_nil
-      expect(payment_changes.first.next_state).to eq('balance_due')
     end
   end
 
   context "#process_payments!" do
-    let(:payment) { stub_model(Spree::Payment) }
-    before { order.stub :pending_payments => [payment], :total => 10 }
-
     it "should process the payments" do
-      payment.should_receive(:process!)
-      order.process_payments!.should be_true
-    end
-
-    it "should return false if no pending_payments available" do
-      order.stub :pending_payments => []
-      order.process_payments!.should be_false
-    end
-
-    context "when a payment raises a GatewayError" do
-      before { payment.should_receive(:process!).and_raise(Spree::Core::GatewayError) }
-
-      it "should return true when configured to allow checkout on gateway failures" do
-        Spree::Config.set :allow_checkout_on_gateway_error => true
-        order.process_payments!.should be_true
-      end
-
-      it "should return false when not configured to allow checkout on gateway failures" do
-        Spree::Config.set :allow_checkout_on_gateway_error => false
-        order.process_payments!.should be_false
-      end
-
+      order.stub(:total).and_return(10)
+      payment = stub_model(Spree::Payment)
+      payments = [payment]
+      order.stub(:payments).and_return(payments)
+      payments.first.should_receive(:process!)
+      order.process_payments!
     end
   end
 
@@ -475,13 +418,6 @@ describe Spree::Order do
       lambda { order_2.reload }.should raise_error(ActiveRecord::RecordNotFound)
     end
 
-    context "user is provided" do
-      it "assigns user to new order" do
-        order_1.merge!(order_2, user)
-        expect(order_1.user).to eq user
-      end
-    end
-
     context "merging together two orders with line items for the same variant" do
       before do
         order_1.contents.add(variant, 1)
@@ -519,39 +455,10 @@ describe Spree::Order do
   end
 
   context "#confirmation_required?" do
-
-    # Regression test for #4117
-    it "is required if the state is currently 'confirm'" do
+    it "does not bomb out when an order has an unpersisted payment" do
       order = Spree::Order.new
+      order.payments.build
       assert !order.confirmation_required?
-      order.state = 'confirm'
-      assert order.confirmation_required?
-    end
-
-    context 'Spree::Config[:always_include_confirm_step] == true' do
-
-      before do
-        Spree::Config[:always_include_confirm_step] = true
-      end
-
-      it "returns true if payments empty" do
-        order = Spree::Order.new
-        assert order.confirmation_required?
-      end
-    end
-
-    context 'Spree::Config[:always_include_confirm_step] == false' do
-
-      it "returns false if payments empty and Spree::Config[:always_include_confirm_step] == false" do
-        order = Spree::Order.new
-        assert !order.confirmation_required?
-      end
-
-      it "does not bomb out when an order has an unpersisted payment" do
-        order = Spree::Order.new
-        order.payments.build
-        assert !order.confirmation_required?
-      end
     end
   end
 
@@ -586,7 +493,7 @@ describe Spree::Order do
     let(:originator) { double("Originator", id: 1) }
     let(:adjustment) { double("Adjustment", originator: originator) }
 
-    before { order.stub_chain(:adjustments, :includes, :promotion, reload: [adjustment]) }
+    before { order.stub_chain(:adjustments, :promotion, reload: [adjustment]) }
 
     context "order has an adjustment from given promo action" do
       it { expect(order.promotion_credit_exists? originator).to be_true }
@@ -608,6 +515,27 @@ describe Spree::Order do
     context "total > zero" do
       before { order.stub(total: 1) }
       it { order.payment_required?.should be_true }
+    end
+  end
+
+  # Related to the fix for #2694
+  context "#has_unprocessed_payments?" do
+    let!(:persisted_order) { create(:order) }
+
+    context "with payments in the 'checkout' state" do
+      before do
+        create(:payment, :order => persisted_order, :state => 'checkout')
+      end
+
+      it "returns true" do
+        assert persisted_order.has_unprocessed_payments?
+      end
+    end
+
+    context "with no payments in the 'checkout' state" do
+      it "returns false" do
+        assert !persisted_order.has_unprocessed_payments?
+      end
     end
   end
 
@@ -634,74 +562,5 @@ describe Spree::Order do
       order.finalize!
     end
   end
-
-  context "ensure shipments will be updated" do
-    before { Spree::Shipment.create!(order: order) }
-
-    it "destroys current shipments" do
-      order.ensure_updated_shipments
-      expect(order.shipments).to be_empty
-    end
-
-    it "puts order back in address state" do
-      order.ensure_updated_shipments
-      expect(order.state).to eql "address"
-    end
-  end
-
-  # Regression tests for #4072
-  context "#state_changed" do
-    let(:order) { FactoryGirl.create(:order) }
-
-    it "logs state changes" do
-      order.update_column(:payment_state, 'balance_due')
-      order.payment_state = 'paid'
-      expect(order.state_changes).to be_empty
-      order.state_changed('payment')
-      state_change = order.state_changes.where(:name => 'payment').first
-      expect(state_change.previous_state).to eq('balance_due')
-      expect(state_change.next_state).to eq('paid')
-    end
-
-    it "does not do anything if state does not change" do
-      order.update_column(:payment_state, 'balance_due')
-      expect(order.state_changes).to be_empty
-      order.state_changed('payment')
-      expect(order.state_changes).to be_empty
-    end
-  end
-
-  # Regression test for #4199
-  context "#available_payment_methods" do
-    it "includes frontend payment methods" do
-      payment_method = Spree::PaymentMethod.create!({
-        :name => "Fake",
-        :active => true,
-        :display_on => "front_end",
-        :environment => Rails.env
-      })
-      expect(order.available_payment_methods).to include(payment_method)
-    end
-
-    it "includes 'both' payment methods" do
-      payment_method = Spree::PaymentMethod.create!({
-        :name => "Fake",
-        :active => true,
-        :display_on => "both",
-        :environment => Rails.env
-      })
-      expect(order.available_payment_methods).to include(payment_method)
-    end
-
-    it "does not include a payment method twice if display_on is blank" do
-      payment_method = Spree::PaymentMethod.create!({
-        :name => "Fake",
-        :active => true,
-        :display_on => "both",
-        :environment => Rails.env
-      })
-      expect(order.available_payment_methods.count).to eq(1)
-      expect(order.available_payment_methods).to include(payment_method)
-    end
-  end
 end
+

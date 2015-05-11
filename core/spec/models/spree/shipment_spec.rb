@@ -5,8 +5,7 @@ describe Spree::Shipment do
   let(:order) { mock_model Spree::Order, backordered?: false,
                                          canceled?: false,
                                          can_ship?: true,
-                                         currency: 'USD',
-                                         touch: true }
+                                         currency: 'USD' }
   let(:shipping_method) { create(:shipping_method, name: "UPS") }
   let(:shipment) do
     shipment = Spree::Shipment.new order: order
@@ -17,20 +16,6 @@ describe Spree::Shipment do
 
   let(:charge) { create(:adjustment) }
   let(:variant) { mock_model(Spree::Variant) }
-
-  # Regression test for #4063
-  context "number generation" do
-    before do
-      order.stub :update!
-    end
-
-    it "generates a number containing a letter + 11 numbers" do
-      shipment.save
-      shipment.number[0].should == "H"
-      /\d{11}/.match(shipment.number).should_not be_nil
-      shipment.number.length.should == 12
-    end
-  end
 
   it 'is backordered if one if its inventory_units is backordered' do
     shipment.stub(inventory_units: [
@@ -77,25 +62,6 @@ describe Spree::Shipment do
     shipment.item_cost.should eql(10.0)
   end
 
-  context "manifest" do
-    let(:order) { Spree::Order.create }
-    let(:variant) { create(:variant) }
-    let!(:line_item) { order.contents.add variant }
-    let!(:shipment) { order.create_proposed_shipments.first }
-
-    it "returns variant expected" do
-      expect(shipment.manifest.first.variant).to eq variant
-    end
-
-    context "variant was removed" do
-      before { variant.product.destroy }
-
-      it "still returns variant expected" do
-        expect(shipment.manifest.first.variant).to eq variant
-      end
-    end
-  end
-
   context 'shipping_rates' do
     let(:shipment) { create(:shipment) }
     let(:shipping_method1) { create(:shipping_method) }
@@ -112,8 +78,7 @@ describe Spree::Shipment do
     end
 
     context 'refresh_rates' do
-      let(:mock_estimator) { double('estimator', shipping_rates: shipping_rates) }
-      before { shipment.stub(:can_get_rates?){ true } }
+      let(:mock_estimator) { mock('estimator', shipping_rates: shipping_rates) }
 
       it 'should request new rates, and maintain shipping_method selection' do
         Spree::Stock::Estimator.should_receive(:new).with(shipment.order).and_return(mock_estimator)
@@ -135,21 +100,6 @@ describe Spree::Shipment do
         shipment.shipping_rates.delete_all
         shipment.stub(shipped?: true)
         shipment.refresh_rates.should == []
-      end
-
-      it "can't get rates without a shipping address" do
-        shipment.order(ship_address: nil)
-        expect(shipment.refresh_rates).to eq([])
-      end
-
-      context 'to_package' do
-        it 'should use symbols for states when adding contents to package' do
-          shipment.stub_chain(:inventory_units, includes: [ build(:inventory_unit, variant: variant, state: 'on_hand'),
-                                                            build(:inventory_unit, variant: variant, state: 'backordered') ] )
-          package = shipment.to_package
-          package.on_hand.count.should eq 1
-          package.backordered.count.should eq 1
-        end
       end
     end
   end
@@ -240,26 +190,6 @@ describe Spree::Shipment do
     end
   end
 
-  context "when variant inventory tracking is false" do
-    it "should include line items without inventory if variant inventory tracking is off" do
-      line_items = [mock_model(Spree::LineItem)]
-      line_items.each { |li| li.stub should_track_inventory?: false }
-      order.stub complete?: true
-      order.stub line_items: line_items
-      shipment.line_items.should == line_items
-    end
-
-    it "should not include line items without inventory if variant inventory tracking is on" do
-      line_items = [mock_model(Spree::LineItem)]
-      line_items.each { |li| li.stub should_track_inventory?: true }
-      order.stub complete?: true
-      order.stub line_items: line_items
-      shipment.line_items.should == []
-    end
-  end
-
-
-
   context "when order is completed" do
     after { Spree::Config.set track_inventory_levels: true }
 
@@ -298,38 +228,10 @@ describe Spree::Shipment do
     end
 
     it 'restocks the items' do
-      shipment.stub_chain(:inventory_units, :joins, includes: [mock_model(Spree::InventoryUnit, state: "on_hand", variant: variant)])
+      shipment.stub_chain(:inventory_units, includes: [mock_model(Spree::InventoryUnit, variant: variant)])
       shipment.stock_location = mock_model(Spree::StockLocation)
       shipment.stock_location.should_receive(:restock).with(variant, 1, shipment)
       shipment.after_cancel
-    end
-
-    context "with backordered inventory units" do
-      let(:order) { create(:order) }
-      let(:variant) { create(:variant) }
-      let(:other_order) { create(:order) }
-
-      before do
-        order.contents.add variant
-        order.create_proposed_shipments
-
-        other_order.contents.add variant
-        other_order.create_proposed_shipments
-      end
-
-      it "doesn't fill backorders when restocking inventory units" do
-        shipment = order.shipments.first
-        expect(shipment.inventory_units.count).to eq 1
-        expect(shipment.inventory_units.first).to be_backordered
-
-        other_shipment = other_order.shipments.first
-        expect(other_shipment.inventory_units.count).to eq 1
-        expect(other_shipment.inventory_units.first).to be_backordered
-
-        expect {
-          shipment.cancel!
-        }.not_to change { other_shipment.inventory_units.first.state }
-      end
     end
   end
 
@@ -346,7 +248,7 @@ describe Spree::Shipment do
     end
 
     it 'unstocks them items' do
-      shipment.stub_chain(:inventory_units, :joins, includes: [mock_model(Spree::InventoryUnit, variant: variant)])
+      shipment.stub_chain(:inventory_units, includes: [mock_model(Spree::InventoryUnit, variant: variant)])
       shipment.stock_location = mock_model(Spree::StockLocation)
       shipment.stock_location.should_receive(:unstock).with(variant, 1, shipment)
       shipment.after_resume
@@ -384,7 +286,7 @@ describe Spree::Shipment do
     end
 
     it "should send a shipment email" do
-      mail_message = double 'Mail::Message'
+      mail_message = mock 'Mail::Message'
       shipment_id = nil
       Spree::ShipmentMailer.should_receive(:shipped_email) { |*args|
         shipment_id = args[0]
@@ -478,29 +380,6 @@ describe Spree::Shipment do
       shipment.tracking = '1Z12345'
 
       shipment.tracking_url.should == :some_url
-    end
-  end
-
-  context "set up new inventory units" do
-    let(:variant) { double("Variant", id: 9) }
-    let(:inventory_units) { double }
-    let(:params) do
-      { variant_id: variant.id, state: 'on_hand', order_id: order.id }
-    end
-
-    before { shipment.stub inventory_units: inventory_units }
-
-    it "associates variant and order" do
-      expect(inventory_units).to receive(:create).with(params, without_protection: true)
-      unit = shipment.set_up_inventory('on_hand', variant, order)
-    end
-  end
-
-  # Regression test for #3349
-  context "#destroy" do
-    it "destroys linked shipping_rates" do
-      reflection = Spree::Shipment.reflect_on_association(:shipping_rates)
-      expect(reflection.options[:dependent]).to be(:delete_all)
     end
   end
 end

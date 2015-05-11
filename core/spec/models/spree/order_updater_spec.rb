@@ -6,13 +6,13 @@ module Spree
     let(:updater) { Spree::OrderUpdater.new(order) }
 
     it "updates totals" do
-      payments = [double(:amount => 5), double(:amount => 5)]
+      payments = [stub(:amount => 5), stub(:amount => 5)]
       order.stub_chain(:payments, :completed).and_return(payments)
 
-      line_items = [double(:amount => 10), double(:amount => 20)]
+      line_items = [stub(:amount => 10), stub(:amount => 20)]
       order.stub :line_items => line_items
 
-      adjustments = [double(:amount => 10), double(:amount => -20)]
+      adjustments = [stub(:amount => 10), stub(:amount => -20)]
       order.stub_chain(:adjustments, :eligible).and_return(adjustments)
 
       updater.update_totals
@@ -68,15 +68,6 @@ module Spree
         order.payment_state.should == 'failed'
       end
 
-      # Regression test for #4281
-      it "is credit_owed if payment taken, but no line items" do
-        order.stub_chain(:line_items, :empty?).and_return(true)
-        order.stub_chain(:payments, :last, :state).and_return('completed')
-
-        updater.update_payment_state
-        order.payment_state.should == 'credit_owed'
-      end
-
       it "is balance due with no line items" do
         order.stub_chain(:line_items, :empty?).and_return(true)
 
@@ -84,13 +75,6 @@ module Spree
         order.payment_state.should == 'balance_due'
       end
 
-      it "is balance due with one pending payment" do
-        order.stub_chain(:payments, :last, :state).and_return('pending')
-
-        updater.update_payment_state
-        order.payment_state.should == 'balance_due'
-      end
-      
       it "is credit owed if payment is above total" do
         order.stub_chain(:line_items, :empty?).and_return(false)
         order.stub :payment_total => 31
@@ -110,9 +94,10 @@ module Spree
       end
     end
 
+
     it "state change" do
       order.shipment_state = 'shipped'
-      state_changes = double
+      state_changes = stub
       order.stub :state_changes => state_changes
       state_changes.should_receive(:create).with({
         :previous_state => nil,
@@ -124,62 +109,23 @@ module Spree
       order.state_changed('shipment')
     end
 
-    context "completed order" do
-      before { order.stub completed?: true }
+    it "updates each shipment" do
+      shipment = stub_model(Spree::Shipment)
+      shipments = [shipment]
+      order.stub :shipments => shipments
+      shipments.stub :states => []
+      shipments.stub :ready => []
+      shipments.stub :pending => []
+      shipments.stub :shipped => []
 
-      it "updates payment state" do
-        expect(updater).to receive(:update_payment_state)
-        updater.update
-      end
+      shipment.should_receive(:update!).with(order)
 
-      it "updates shipment state" do
-        expect(updater).to receive(:update_shipment_state)
-        updater.update
-      end
-
-      it "updates each shipment" do
-        shipment = stub_model(Spree::Shipment)
-        shipments = [shipment]
-        order.stub :shipments => shipments
-        shipments.stub :states => []
-        shipments.stub :ready => []
-        shipments.stub :pending => []
-        shipments.stub :shipped => []
-
-        shipment.should_receive(:update!).with(order)
-        updater.update
-      end
-    end
-
-    context "incompleted order" do
-      before { order.stub completed?: false }
-
-      it "doesnt update payment state" do
-        expect(updater).not_to receive(:update_payment_state)
-        updater.update
-      end
-
-      it "doesnt update shipment state" do
-        expect(updater).not_to receive(:update_shipment_state)
-        updater.update
-      end
-
-      it "doesnt update each shipment" do
-        shipment = stub_model(Spree::Shipment)
-        shipments = [shipment]
-        order.stub :shipments => shipments
-        shipments.stub :states => []
-        shipments.stub :ready => []
-        shipments.stub :pending => []
-        shipments.stub :shipped => []
-
-        expect(shipment).not_to receive(:update!).with(order)
-        updater.update
-      end
+      updater.update
     end
 
     it "updates totals twice" do
       updater.should_receive(:update_totals).twice
+
       updater.update
     end
 

@@ -8,7 +8,8 @@ module Spree
       # instead of actually deleting the product.
       def destroy
         @variant = Variant.find(params[:id])
-        if @variant.destroy
+        @variant.deleted_at = Time.now()
+        if @variant.save
           flash[:success] = Spree.t('notice_messages.variant_deleted')
         else
           flash[:success] = Spree.t('notice_messages.variant_not_deleted')

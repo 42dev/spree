@@ -26,7 +26,7 @@ describe Spree::CheckoutController do
         controller.stub :current_order => order
       end
 
-      it "displays rate cost in correct currency" do
+      it "contains stuff" do
         spree_get :edit
         html = Nokogiri::HTML(response.body)
         html.css('.rate-cost').text.should == "£10.00"

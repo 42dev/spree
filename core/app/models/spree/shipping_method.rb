@@ -5,16 +5,16 @@ module Spree
 
     default_scope where(deleted_at: nil)
 
+    has_many :shipments
     has_many :shipping_method_categories
     has_many :shipping_categories, through: :shipping_method_categories
     has_many :shipping_rates
-    has_many :shipments, :through => :shipping_rates
 
     has_and_belongs_to_many :zones, :join_table => 'spree_shipping_methods_zones',
                                     :class_name => 'Spree::Zone',
                                     :foreign_key => 'shipping_method_id'
 
-    attr_accessible :name, :admin_name, :zones, :display_on, :shipping_category_id,
+    attr_accessible :name, :zones, :display_on, :shipping_category_id,
                     :match_none, :match_one, :match_all, :tracking_url
 
     validates :name, presence: true
@@ -43,8 +43,7 @@ module Spree
     end
 
     def build_tracking_url(tracking)
-      return if tracking.blank? || tracking_url.blank?
-      tracking_url.gsub(/:tracking/, ERB::Util.url_encode(tracking)) # :url_encode exists in 1.8.7 through 2.1.0
+      tracking_url.gsub(/:tracking/, tracking) unless tracking.blank? || tracking_url.blank?
     end
 
     def self.calculators
@@ -64,11 +63,11 @@ module Spree
       end
 
       def self.on_backend_query
-        "#{quoted_table_name}.display_on != 'front_end' OR #{quoted_table_name}.display_on IS NULL"
+        "#{table_name}.display_on != 'front_end' OR #{table_name}.display_on IS NULL"
       end
 
       def self.on_frontend_query
-        "#{quoted_table_name}.display_on != 'back_end' OR #{quoted_table_name}.display_on IS NULL"
+        "#{table_name}.display_on != 'back_end' OR #{table_name}.display_on IS NULL"
       end
   end
 end
