@@ -133,7 +133,7 @@ module Spree
       end
 
       it "can mark a return authorization as received on the order with an inventory unit" do
-        FactoryGirl.create(:new_return_authorization, :order => order)
+        FactoryGirl.create(:new_return_authorization, :order => order, :stock_location_id => order.shipments.first.stock_location.id)
         return_authorization = order.return_authorizations.first
         return_authorization.state.should == "authorized"
 
@@ -202,7 +202,7 @@ module Spree
         return_authorization = order.return_authorizations.first
         api_delete :destroy, :id => return_authorization.id
         assert_unauthorized!
-        lambda { return_authorization.reload }.should_not raise_error(ActiveRecord::RecordNotFound)
+        lambda { return_authorization.reload }.should_not raise_error
       end
     end
   end

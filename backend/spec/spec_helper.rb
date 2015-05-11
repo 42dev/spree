@@ -14,7 +14,13 @@ end
 # This file is copied to ~/spec when you run 'ruby script/generate rspec'
 # from the project root directory.
 ENV["RAILS_ENV"] ||= 'test'
-require File.expand_path("../dummy/config/environment", __FILE__)
+
+begin
+  require File.expand_path("../dummy/config/environment", __FILE__)
+rescue LoadError
+  puts "Could not load dummy application. Please ensure you have run `bundle exec rake test_app`"
+end
+
 require 'rspec/rails'
 
 # Requires supporting files with custom matchers and macros, etc,
@@ -22,6 +28,7 @@ require 'rspec/rails'
 Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].each {|f| require f}
 
 require 'database_cleaner'
+require 'ffaker'
 
 require 'spree/testing_support/authorization_helpers'
 require 'spree/testing_support/factories'
@@ -38,24 +45,27 @@ RSpec.configure do |config|
   config.color = true
   config.mock_with :rspec
 
-  config.fixture_path = File.join(File.expand_path(File.dirname(__FILE__)), "fixtures")
-
-  #config.include Devise::TestHelpers, :type => :controller
   # If you're not using ActiveRecord, or you'd prefer not to run each of your
   # examples within a transaction, comment the following line or assign false
   # instead of true.
   config.use_transactional_fixtures = false
 
+  config.before :suite do
+    Capybara.match = :prefer_exact
+  end
+
   config.before(:each) do
+    WebMock.disable!
     if example.metadata[:js]
       DatabaseCleaner.strategy = :truncation
     else
       DatabaseCleaner.strategy = :transaction
     end
-  end
-
-  config.before(:each) do
-    WebMock.disable!
+    # TODO: Find out why open_transactions ever gets below 0
+    # See issue #3428
+    if ActiveRecord::Base.connection.open_transactions < 0
+      ActiveRecord::Base.connection.increment_open_transactions
+    end
     DatabaseCleaner.start
     reset_spree_preferences
   end
@@ -64,7 +74,7 @@ RSpec.configure do |config|
     DatabaseCleaner.clean
   end
 
-  config.after(:each, :type => :request) do
+  config.after(:each, :type => :feature) do
     missing_translations = page.body.scan(/translation missing: #{I18n.locale}\.(.*?)[\s<\"&]/)
     if missing_translations.any?
       #binding.pry

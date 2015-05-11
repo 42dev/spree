@@ -7,7 +7,7 @@ module Spree
 
     attr_accessor :number, :verification_value
 
-    validates :month, :year, numericality: { only_integer: true }
+    validates :month, :year, numericality: { only_integer: true }, unless: :has_payment_profile?
     validates :number, presence: true, unless: :has_payment_profile?, on: :create
     validates :verification_value, presence: true, unless: :has_payment_profile?, on: :create
     validate :expiry_not_in_the_past
@@ -29,6 +29,19 @@ module Spree
       class << self
         include ActiveMerchant::Billing::CreditCardMethods::ClassMethods
       end
+    end
+
+    # Some payment gateways, such as USA EPay, only support an ActiveMerchant::Billing::CreditCard
+    # object, rather than an object *like* that. So we need to convert it.
+    def to_active_merchant
+      ActiveMerchant::Billing::CreditCard.new(
+        :number => number,
+        :month => month,
+        :year => year,
+        :verification_value => verification_value,
+        :first_name => first_name,
+        :last_name => last_name
+        )
     end
 
     # sets self.cc_type while we still have the card number
@@ -81,7 +94,7 @@ module Spree
     end
 
     def has_payment_profile?
-      gateway_customer_profile_id.present?
+      gateway_customer_profile_id.present? || gateway_payment_profile_id.present?
     end
 
     def spree_cc_type
@@ -92,10 +105,10 @@ module Spree
     private
 
     def expiry_not_in_the_past
-      if year && month
+      if year.present? && month.present?
         time = "#{year}-#{month}-1".to_time
-        if time < Time.zone.now.beginning_of_month
-          errors.add("card", "has expired")
+        if time < Time.zone.now.to_time.beginning_of_month
+          errors.add(:base, :card_expired)
         end
       end
     end

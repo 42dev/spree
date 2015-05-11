@@ -17,9 +17,12 @@ module Spree
 
         def update
           if @order.update_attributes(params[:order])
+            if params[:guest_checkout] == "false"
+              @order.associate_user!(Spree.user_class.find_by_email(@order.email))
+            end
             while @order.next; end
 
-            @order.shipments.map &:refresh_rates
+            @order.refresh_shipment_rates
             flash[:success] = Spree.t('customer_details_updated')
             redirect_to admin_order_customer_path(@order)
           else
@@ -32,6 +35,10 @@ module Spree
 
           def load_order
             @order = Order.find_by_number!(params[:order_id], :include => :adjustments)
+          end
+
+          def model_class
+            Spree::Order
           end
 
       end

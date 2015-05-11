@@ -16,11 +16,15 @@ module Spree
     # associations try to save and then in turn try to call +update!+ again.)
     def update
       update_totals
-      update_payment_state
 
-      # give each of the shipments a chance to update themselves
-      shipments.each { |shipment| shipment.update!(order) }#(&:update!)
-      update_shipment_state
+      if order.completed?
+        update_payment_state
+
+        # give each of the shipments a chance to update themselves
+        shipments.each { |shipment| shipment.update!(order) }
+        update_shipment_state
+      end
+      
       update_adjustments
       # update totals a second time in case updated adjustments have an effect on the total
       update_totals
@@ -97,10 +101,16 @@ module Spree
     # The +payment_state+ value helps with reporting, etc. since it provides a quick and easy way to locate Orders needing attention.
     def update_payment_state
 
-      #line_item are empty when user empties cart
+      # line_item are empty when user empties cart
       if line_items.empty? || round_money(order.payment_total) < round_money(order.total)
-        if payments.present? && payments.last.state == 'failed'
-          order.payment_state = 'failed'
+        if payments.present?
+          if payments.last.state == 'failed'
+            order.payment_state = 'failed'
+          elsif payments.last.state == 'completed'
+            order.payment_state = 'credit_owed'
+          else
+            order.payment_state = 'balance_due'
+          end
         else
           order.payment_state = 'balance_due'
         end
@@ -121,7 +131,7 @@ module Spree
     # Adjustments will check if they are still eligible. Ineligible adjustments
     # are preserved but not counted towards adjustment_total.
     def update_adjustments
-      order.adjustments.reload.each { |adjustment| adjustment.update! }
+      order.adjustments.reload.each { |adjustment| adjustment.update!(order) }
       choose_best_promotion_adjustment
     end
 

@@ -22,25 +22,21 @@ module Spree
       Spree::Config[:track_inventory_levels] = true
     end
 
+    context "GET 'show'" do
+      let(:order) { create(:order) }
+
+      it "redirects to Orders#show" do
+        api_get :show, :id => order.number
+        response.status.should == 301
+        response.should redirect_to("/api/orders/#{order.number}")
+      end
+    end
+
     context "POST 'create'" do
       it "creates a new order when no parameters are passed" do
         api_post :create
 
         json_response['number'].should be_present
-        response.status.should == 201
-      end
-
-      it "should not have a user by default" do
-        api_post :create
-
-        json_response['user_id'].should_not be_present
-        response.status.should == 201
-      end
-
-      it "should not have an email by default" do
-        api_post :create
-
-        json_response['email'].should_not be_present
         response.status.should == 201
       end
     end
@@ -58,16 +54,6 @@ module Spree
         assert_unauthorized!
       end
 
-      it "will return an error if the recently created order cannot transition from cart to address" do
-        order.state.should eq "cart"
-        order.update_column(:email, nil) # email is necessary to transition from cart to address
-
-        api_put :update, :id => order.to_param, :order_token => order.token
-
-        # Order has not transitioned
-        json_response['state'].should == 'cart'
-      end
-
       it "should transition a recently created order from cart to address" do
         order.state.should eq "cart"
         order.email.should_not be_nil
@@ -80,7 +66,6 @@ module Spree
         api_put :update, :id => order.to_param, :order_token => order.token,
                          :order => { :line_items_attributes => { line_item.id => { :quantity => 1 } } }
         response.status.should == 200
-        order.reload.state.should eq "address"
       end
 
       it "can take line_items as a parameter" do
@@ -88,7 +73,6 @@ module Spree
         api_put :update, :id => order.to_param, :order_token => order.token,
                          :order => { :line_items => { line_item.id => { :quantity => 1 } } }
         response.status.should == 200
-        order.reload.state.should eq "address"
       end
 
       it "will return an error if the order cannot transition" do
@@ -206,10 +190,26 @@ module Spree
         Spree::Promo::CouponApplicator.any_instance.should_receive(:apply).and_return({:coupon_applied? => true})
         api_put :update, :id => order.to_param, :order => { :coupon_code => "foobar" }, :order_token => order.token
       end
+
+      it "can apply a coupon code to an order" do
+        order.update_column(:state, "payment")
+        Spree::Promo::CouponApplicator.should_receive(:new).with(order).and_call_original
+        coupon_result = { :coupon_applied? => true }
+        Spree::Promo::CouponApplicator.any_instance.should_receive(:apply).and_return(coupon_result)
+        api_put :update, :id => order.to_param, :order_token => order.token, :order => { :coupon_code => "foobar" }
+      end
     end
 
     context "PUT 'next'" do
-      let!(:order) { create(:order) }
+      let!(:order) { create(:order_with_line_items) }
+      it "cannot transition to address without a line item" do
+        order.line_items.delete_all
+        order.update_column(:email, "spree@example.com")
+        api_put :next, :id => order.to_param, :order_token => order.token
+        response.status.should == 422
+        json_response["errors"]["base"].should include(Spree.t(:there_are_no_items_for_this_order))
+      end
+
       it "can transition an order to the next state" do
         order.update_column(:email, "spree@example.com")
 
@@ -220,19 +220,31 @@ module Spree
 
       it "cannot transition if order email is blank" do
         order.update_column(:email, nil)
+        order.update_column(:state, 'address')
 
         api_put :next, :id => order.to_param, :order_token => order.token
         response.status.should == 422
         json_response['error'].should =~ /could not be transitioned/
       end
 
-      it "can apply a coupon code to an order" do
+      it "returns a sensible error when no payment method is specified" do
         order.update_column(:state, "payment")
-        Spree::Promo::CouponApplicator.should_receive(:new).with(order).and_call_original
-        coupon_result = { :coupon_applied? => true }
-        Spree::Promo::CouponApplicator.any_instance.should_receive(:apply).and_return(coupon_result)
-        api_put :update, :id => order.to_param, :order_token => order.token, :order => { :coupon_code => "foobar" }
+        api_put :next, :id => order.to_param, :order_token => order.token, :order => {}
+        json_response["errors"]["base"].should include(Spree.t(:no_pending_payments))
       end
+    end
+
+    context "PUT 'advance'" do
+      let!(:order) { create(:order_with_line_items) }
+      it 'continues to advance advances an order while it can move forward' do
+        Spree::Order.any_instance.should_receive(:next).exactly(3).times.and_return(true, true, false)
+        api_put :advance, :id => order.to_param, :order_token => order.token
+      end
+      it 'returns the order' do
+        api_put :advance, :id => order.to_param, :order_token => order.token
+        json_response['id'].should == order.id
+      end
+
     end
   end
 end

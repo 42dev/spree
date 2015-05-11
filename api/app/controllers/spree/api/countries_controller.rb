@@ -1,10 +1,12 @@
 module Spree
   module Api
     class CountriesController < Spree::Api::BaseController
+      skip_before_filter :check_for_user_or_api_key
+      skip_before_filter :authenticate_user
 
       def index
         @countries = Country.ransack(params[:q]).result.
-                     includes(:states).order('name ASC').
+                     includes(:states).order("#{Spree::Country.quoted_table_name}.name ASC").
                      page(params[:page]).per(params[:per_page])
 
         respond_with(@countries)

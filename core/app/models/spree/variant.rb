@@ -1,5 +1,7 @@
 module Spree
   class Variant < ActiveRecord::Base
+    acts_as_paranoid
+
     belongs_to :product, touch: true, class_name: 'Spree::Product'
 
     delegate_belongs_to :product, :name, :description, :permalink, :available_on,
@@ -9,12 +11,13 @@ module Spree
     attr_accessible :name, :presentation, :cost_price, :lock_version,
                     :position, :option_value_ids,
                     :product_id, :option_values_attributes, :price,
-                    :weight, :height, :width, :depth, :sku, :cost_currency
+                    :weight, :height, :width, :depth, :sku, :cost_currency,
+                    :track_inventory, :options
 
     has_many :inventory_units
     has_many :line_items
 
-    has_many :stock_items, dependent: :destroy
+    has_many :stock_items, dependent: :destroy, :order => "id ASC"
     has_many :stock_locations, through: :stock_items
     has_many :stock_movements
 
@@ -33,7 +36,7 @@ module Spree
       dependent: :destroy
 
     validate :check_price
-    validates :price, numericality: { greater_than_or_equal_to: 0 }, presence: true, if: proc { Spree::Config[:require_master_price] }
+    validates :price, numericality: { greater_than_or_equal_to: 0 }
     validates :cost_price, numericality: { greater_than_or_equal_to: 0, allow_nil: true } if self.table_exists? && self.column_names.include?('cost_price')
 
     before_validation :set_cost_currency
@@ -42,7 +45,7 @@ module Spree
     after_create :set_position
 
     # default variant scope only lists non-deleted variants
-    scope :deleted, lambda { where('deleted_at IS NOT NULL') }
+    scope :deleted, lambda { where("#{quoted_table_name}.deleted_at IS NOT NULL") }
 
     def self.active(currency = nil)
       joins(:prices).where(deleted_at: nil).where('spree_prices.currency' => currency || Spree::Config[:currency]).where('spree_prices.amount IS NOT NULL')
@@ -58,7 +61,7 @@ module Spree
     end
 
     def options_text
-      values = self.option_values.joins(:option_type).order("#{Spree::OptionType.table_name}.position asc")
+      values = self.option_values.joins(:option_type).order("#{Spree::OptionType.quoted_table_name}.position asc")
 
       values.map! do |ov|
         "#{ov.option_type.presentation}: #{ov.presentation}"
@@ -75,7 +78,13 @@ module Spree
     # allows extensions to override deleted? if they want to provide
     # their own definition.
     def deleted?
-      deleted_at
+      !!deleted_at
+    end
+
+    def options=(options = {})
+      options.each do |option|
+        set_option_value(option[:name], option[:value])
+      end
     end
 
     def set_option_value(opt_name, opt_value)
@@ -133,6 +142,23 @@ module Spree
       Spree::Stock::Quantifier.new(self).can_supply?(quantity)
     end
 
+    def total_on_hand
+      Spree::Stock::Quantifier.new(self).total_on_hand
+    end
+
+    # Product may be created with deleted_at already set,
+    # which would make AR's default finder return nil.
+    # This is a stopgap for that little problem.
+    def product
+      Spree::Product.unscoped { super }
+    end
+
+    # Shortcut method to determine if inventory tracking is enabled for this variant
+    # This considers both variant tracking flag and site-wide inventory tracking settings
+    def should_track_inventory?
+      self.track_inventory? && Spree::Config.track_inventory_levels
+    end
+
     private
       # strips all non-price-like characters from the price, taking into account locale settings
       def parse_price(price)
@@ -167,8 +193,8 @@ module Spree
       end
 
       def create_stock_items
-        Spree::StockLocation.all.each do |stock_location|
-          stock_location.stock_items.create!(variant: self)
+        StockLocation.all.each do |stock_location|
+          stock_location.propagate_variant(self) if stock_location.propagate_all_variants?
         end
       end
 

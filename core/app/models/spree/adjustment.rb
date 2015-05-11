@@ -55,15 +55,19 @@ module Spree
     scope :shipping, -> { where(originator_type: 'Spree::ShippingMethod') }
     scope :optional, -> { where(mandatory: false) }
     scope :eligible, -> { where(eligible: true) }
-    scope :charge, -> { where('amount >= 0') }
-    scope :credit, -> { where('amount < 0') }
+    scope :charge, -> { where("#{quoted_table_name}.amount >= 0") }
+    scope :credit, -> { where("#{quoted_table_name}.amount < 0") }
     scope :promotion, -> { where(originator_type: 'Spree::PromotionAction') }
     scope :return_authorization, -> { where(source_type: "Spree::ReturnAuthorization") }
+
+    def promotion?
+      originator_type == 'Spree::PromotionAction'
+    end
 
     # Update the boolean _eligible_ attribute which determines which adjustments
     # count towards the order's adjustment_total.
     def set_eligibility
-      result = self.mandatory || (self.amount != 0 && self.eligible_for_originator?)
+      result = mandatory || ((amount != 0 || promotion?) && eligible_for_originator?)
       update_attribute_without_callbacks(:eligible, result)
     end
 
@@ -74,16 +78,21 @@ module Spree
       !originator.respond_to?(:eligible?) || originator.eligible?(source)
     end
 
-    # Update both the eligibility and amount of the adjustment. Adjustments 
+    # Update both the eligibility and amount of the adjustment. Adjustments
     # delegate updating of amount to their Originator when present, but only if
     # +locked+ is false. Adjustments that are +locked+ will never change their amount.
     #
     # order#update_adjustments passes self as the src, this is so calculations can
     # be performed on the # current values. If we used source it would load the old
     # record from db for the association
-    def update!
+    def update!(calculable=nil)
       return if immutable?
-      originator.update_adjustment(self, source) if originator.present?
+      # Fix for #3381
+      # If we attempt to call 'source' before the reload, then source is currently
+      # the order object. After calling a reload, the source is the Shipment.
+      reload
+      calculable = source unless calculable == source
+      originator.update_adjustment(self, calculable) if originator.present?
       set_eligibility
     end
 

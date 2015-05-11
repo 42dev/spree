@@ -14,11 +14,11 @@ module Spree
     accepts_nested_attributes_for :zone_members, allow_destroy: true, reject_if: proc { |a| a['zoneable_id'].blank? }
 
     attr_accessible :name, :description, :default_tax, :kind, :zone_members,
-                    :zone_members_attributes
+                    :zone_members_attributes, :state_ids, :country_ids
 
     def kind
       if members.any? && !members.any? { |member| member.try(:zoneable_type).nil? }
-        members.last.zoneable_type.demodulize.downcase
+        members.last.zoneable_type.demodulize.underscore
       end
     end
 
@@ -75,6 +75,42 @@ module Spree
       members.collect(&:zoneable)
     end
 
+    def country_ids
+      if kind == 'country'
+        members.collect(&:zoneable_id)
+      else
+        []
+      end
+    end
+
+    def state_ids
+      if kind == 'state'
+        members.collect(&:zoneable_id)
+      else
+        []
+      end
+    end
+
+    def country_ids=(ids)
+      zone_members.destroy_all
+      ids.reject{ |id| id.blank? }.map do |id|
+        member = ZoneMember.new
+        member.zoneable_type = 'Spree::Country'
+        member.zoneable_id = id
+        members << member
+      end
+    end
+
+    def state_ids=(ids)
+      zone_members.destroy_all
+      ids.reject{ |id| id.blank? }.map do |id|
+        member = ZoneMember.new
+        member.zoneable_type = 'Spree::State'
+        member.zoneable_id = id
+        members << member
+      end
+    end
+
     def self.default_tax
       where(default_tax: true).first
     end
@@ -97,7 +133,7 @@ module Spree
 
       def remove_defunct_members
         if zone_members.any?
-          zone_members.where('zoneable_id IS NULL OR zoneable_type != ?', "Spree::#{kind.capitalize}").destroy_all
+          zone_members.where('zoneable_id IS NULL OR zoneable_type != ?', "Spree::#{kind.classify}").destroy_all
         end
       end
 

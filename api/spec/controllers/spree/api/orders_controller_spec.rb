@@ -9,12 +9,11 @@ module Spree
                         :state, :adjustment_total,
                         :user_id, :created_at, :updated_at,
                         :completed_at, :payment_total, :shipment_state,
-                        :payment_state, :email, :special_instructions] }
+                        :payment_state, :email, :special_instructions, :token] }
 
+    let(:variant) { create(:variant) }
 
-    before do
-      stub_authentication!
-    end
+    before { stub_authentication! }
 
     it "cannot view all orders" do
       api_get :index
@@ -55,28 +54,112 @@ module Spree
       assert_unauthorized!
     end
 
-    it "can create an order" do
-      variant = create(:variant)
-      api_post :create, :order => { :line_items => { "0" => { :variant_id => variant.to_param, :quantity => 5 } } }
-      response.status.should == 201
-      order = Order.last
-      order.line_items.count.should == 1
-      order.line_items.first.variant.should == variant
-      order.line_items.first.quantity.should == 5
-      json_response["state"].should == "cart"
+    context "create order" do
+      let(:current_api_user) do
+        user = Spree.user_class.new(:email => "spree@example.com")
+        user.generate_spree_api_key!
+        user
+      end
+
+      it "can create an order" do
+        variant = create(:variant)
+        api_post :create, :order => { :line_items => { "0" => { :variant_id => variant.to_param, :quantity => 5 } } }
+        response.status.should == 201
+        order = Order.last
+        order.line_items.count.should == 1
+        order.line_items.first.variant.should == variant
+        order.line_items.first.quantity.should == 5
+        json_response["state"].should == "cart"
+        order.user.should == current_api_user
+        order.email == current_api_user.email
+        json_response["user_id"].should == current_api_user.id
+      end
+
+      context "import" do
+        let(:tax_rate) { create(:tax_rate, amount: 0.05, calculator: Calculator::DefaultTax.create) }
+        let(:other_variant) { create(:variant) }
+
+        # line items come in as an array when importing orders or when
+        # creating both an order an a line item at once
+        let(:order_params) do
+          {
+            :line_items => [
+              { :variant_id => variant.to_param, :quantity => 5 },
+              { :variant_id => other_variant.to_param, :quantity => 5 }
+            ]
+          }
+        end
+
+        before do
+          Zone.stub default_tax: tax_rate.zone
+          current_api_user.stub has_spree_role?: true
+        end
+
+        it "sets channel" do
+          api_post :create, :order => { channel: "amazon" }
+          expect(json_response['channel']).to eq "amazon"
+        end
+
+        it "doesnt persist any automatic tax adjustment" do
+          expect {
+            api_post :create, :order => order_params.merge(:import => true)
+          }.not_to change { Adjustment.count }
+          expect(response.status).to eq 201
+        end
+
+        context "provides sku rather than variant id" do
+          let(:order_params) do
+            { :line_items => [{ :sku => variant.sku, :quantity => 1 }] }
+          end
+
+          it "still finds the variant by sku and persist order" do
+            api_post :create, :order => order_params
+            expect(json_response['line_items'].count).to eq 1
+          end
+        end
+      end
+
+      it "cannot create an order with an abitrary price for the line item" do
+        variant = create(:variant)
+        api_post :create, :order => {
+          :line_items => {
+            "0" => {
+              :variant_id => variant.to_param,
+              :quantity => 5,
+              :price => 0.44
+            }
+          }
+        }
+        response.status.should == 201
+        order = Order.last
+        order.line_items.count.should == 1
+        order.line_items.first.variant.should == variant
+        order.line_items.first.quantity.should == 5
+        order.line_items.first.price.should == order.line_items.first.variant.price
+      end
     end
 
     it "can create an order without any parameters" do
-      lambda { api_post :create }.should_not raise_error(NoMethodError)
+      lambda { api_post :create }.should_not raise_error
       response.status.should == 201
       order = Order.last
       json_response["state"].should == "cart"
     end
 
     context "working with an order" do
+      let!(:line_item) { order.contents.add(variant, 1) }
+      let!(:payment_method) { create(:payment_method) }
+
+      let(:address_params) { { :country_id => Country.first.id, :state_id => State.first.id } }
+      let(:billing_address) { { :firstname => "Tiago", :lastname => "Motta", :address1 => "Av Paulista",
+                                :city => "Sao Paulo", :zipcode => "1234567", :phone => "12345678",
+                                :country_id => Country.first.id, :state_id => State.first.id} }
+      let(:shipping_address) { { :firstname => "Tiago", :lastname => "Motta", :address1 => "Av Paulista",
+                                 :city => "Sao Paulo", :zipcode => "1234567", :phone => "12345678",
+                                 :country_id => Country.first.id, :state_id => State.first.id} }
+
       before do
         Order.any_instance.stub :user => current_api_user
-        create(:payment_method)
         order.next # Switch from cart to address
         order.bill_address = nil
         order.ship_address = nil
@@ -99,11 +182,28 @@ module Spree
                                  :country_id => Country.first.id, :state_id => State.first.id} }
       let!(:payment_method) { create(:payment_method) }
 
-      it "can add line items" do
-        api_put :update, :id => order.to_param, :order => { :line_items => [{:variant_id => create(:variant).id, :quantity => 2}] }
+      it "updates quantities of existing line items" do
+        api_put :update, :id => order.to_param, :order => {
+          :line_items => {
+            line_item.id => { :quantity => 10 }
+          }
+        }
 
         response.status.should == 200
-        json_response['item_total'].to_f.should_not == order.item_total.to_f
+        json_response['line_items'].count.should == 1
+        json_response['line_items'].first['quantity'].should == 10
+      end
+
+      it "cannot set a price for a line item" do
+        variant = create(:variant)
+        api_put :update, :id => order.to_param, :order => {
+          :line_items_attributes => { order.line_items.first.id =>
+            { :variant_id => variant.id, :quantity => 2, :price => 0.44}
+          }
+        }
+        response.status.should == 200
+        json_response['line_items'].count.should == 1
+        expect(json_response['line_items'].first['price']).to eq(variant.price.to_s)
       end
 
       it "can add billing address" do
@@ -140,6 +240,20 @@ module Spree
         json_response['error'].should_not be_nil
         json_response['errors'].should_not be_nil
         json_response['errors']['ship_address.firstname'].first.should eq "can't be blank"
+      end
+
+      context "order has shipments" do
+        before { order.create_proposed_shipments }
+
+        it "clears out all existing shipments on line item udpate" do
+          previous_shipments = order.shipments
+          api_put :update, :id => order.to_param, :order => {
+            :line_items => {
+              line_item.id => { :quantity => 10 }
+            }
+          }
+          expect(order.reload.shipments).to be_empty
+        end
       end
 
       context "with a line item" do
@@ -179,6 +293,17 @@ module Spree
           api_get :index
           json_response["orders"].should == []
         end
+      end
+
+      it "responds with orders updated_at with miliseconds precision" do
+        if ActiveRecord::Base.connection.adapter_name == "Mysql2"
+          pending "MySQL does not support millisecond timestamps."
+        end
+
+        api_get :index
+        milisecond = order.updated_at.strftime("%L")
+        updated_at = json_response["orders"].first["updated_at"]
+        expect(updated_at.split("T").last).to have_content(milisecond)
       end
 
       context "with two orders" do

@@ -1,15 +1,15 @@
 module Spree
   class ProductsController < Spree::StoreController
     before_filter :load_product, :only => :show
+    before_filter :load_taxon, :only => :index
+
     rescue_from ActiveRecord::RecordNotFound, :with => :render_404
     helper 'spree/taxons'
 
     respond_to :html
 
     def index
-      @searcher = Config.searcher_class.new(params)
-      @searcher.current_user = try_spree_current_user
-      @searcher.current_currency = current_currency
+      @searcher = build_searcher(params)
       @products = @searcher.retrieve_products
     end
 
@@ -28,7 +28,7 @@ module Spree
           # Do nothing
         else
           if referer_path && referer_path.match(/\/t\/(.*)/)
-            @taxon = Taxon.find_by_permalink($1)
+            @taxon = Spree::Taxon.find_by_permalink($1)
           end
         end
       end
@@ -45,6 +45,10 @@ module Spree
         else
           @product = Product.active(current_currency).find_by_permalink!(params[:id])
         end
+      end
+
+      def load_taxon
+        @taxon = Spree::Taxon.find(params[:taxon]) if params[:taxon].present?
       end
   end
 end

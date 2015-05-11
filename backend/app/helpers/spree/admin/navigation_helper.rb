@@ -29,8 +29,10 @@ module Spree
           link = link_to(titleized_label, destination_url)
         end
 
-        selected = if options[:match_path]
-          request.fullpath.starts_with?("#{spree.root_path}admin#{options[:match_path]}")
+        selected = if options[:match_path].is_a? Regexp
+          request.fullpath =~ options[:match_path]
+        elsif options[:match_path]
+          request.fullpath.starts_with?("#{admin_path}#{options[:match_path]}")
         else
           args.include?(controller.controller_name.to_sym)
         end
@@ -69,8 +71,9 @@ module Spree
       end
 
       def link_to_edit(resource, options={})
+        url = options[:url] || edit_object_url(resource)
         options[:data] = {:action => 'edit'}
-        link_to_with_icon('icon-edit', Spree.t(:edit), edit_object_url(resource), options)
+        link_to_with_icon('icon-edit', Spree.t(:edit), url, options)
       end
 
       def link_to_edit_url(url, options={})
@@ -142,7 +145,9 @@ module Spree
       end
 
       def configurations_sidebar_menu_item(link_text, url, options = {})
-        is_active = url.ends_with?(controller.controller_name) || url.ends_with?( "#{controller.controller_name}/edit")
+        is_active = url.ends_with?(controller.controller_name) || 
+                    url.ends_with?("#{controller.controller_name}/edit") ||
+                    url.ends_with?("#{controller.controller_name.singularize}/edit")
         options.merge!(:class => is_active ? 'active' : nil)
         content_tag(:li, options) do
           link_to(link_text, url)
